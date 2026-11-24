@@ -68,4 +68,20 @@ A family-law and property-law mechanism that determines ownership and allocation
 
 An equity interest in a company whose voting, investment, sale, and disposal rights are shared through spousal, trust, or governance arrangements. The equity asset is the main financial object; the legal control structure is the background cross-link.
 
+## Learning event
+
+An append-only record of a learning action on a calendar date, such as completing an article, starting an article review, learning a word for the first time, or reviewing a word. Daily history, plan completion and heatmaps are derived from events instead of mutable counters.
+
+## Study plan
+
+A date-specific list of article read/review items plus target counts and a note. Planned item completion is derived from matching learning events; the plan does not store a separate completed flag.
+
+## Background task
+
+A persistent operation tracked through queued, running, success, failed or cancelled states. Annotation, focus batch refresh, AI summary, knowledge-card revalidation, crawling and mind-map generation use the same task lifecycle.
+
+## Mind map
+
+A normalized tree that represents an article as thesis, arguments, evidence and implications. Nodes may cite source paragraph numbers, and generated maps are cached per article without changing the source text.
+
 See [Knowledge Classification Decision Framework](docs/knowledge-classification-decision-framework.md) for the full decision procedure.

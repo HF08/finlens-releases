@@ -2983,22 +2983,24 @@ try {
   await retryPage.locator('#setApiKey').press('Tab');
   await retryPage.locator('#engineModal .modal-head [data-close]').click();
   await retryPage.locator('#btnRetryImport').click();
-  await retryPage.locator('#aiProgressPanel').waitFor({ state: 'visible', timeout: 3000 });
   await retryPage.waitForFunction(
-    () => !document.querySelector('#aiProgressLabel')?.textContent.includes('API Key'),
+    () => taskCenterSummary().latest?.type === 'annotation' &&
+      taskCenterSummary().latest?.status === 'success',
     null,
-    { timeout: 3000 }
+    { timeout: 15000 }
   );
-  const retryProgress = await retryPage.locator('#aiProgressPanel').innerText();
-  check('Retry import shows step progress and percentage',
-    retryProgress.includes('正文清洗') &&
-    retryProgress.includes('连接 AI 模型') &&
-    /%/.test(retryProgress),
+  await retryPage.evaluate(() => openTaskCenter('history'));
+  const retryProgress = await retryPage.locator('#taskCenterModal').innerText();
+  check('Retry import creates a completed annotation task',
+    retryProgress.includes('文章标注') &&
+    retryProgress.includes('标注完成') &&
+    retryProgress.includes('100%'),
     retryProgress.slice(0, 220));
+  await retryPage.locator('#taskCenterModal .modal-head [data-close]').click();
   await retryPage.screenshot({ path: path.join(OUT, 'import-retry-progress.png') });
   await retryPage.locator('#importModal').waitFor({ state: 'hidden', timeout: 15000 });
-  check('Import progress is hidden after the import dialog closes',
-    await retryPage.locator('#aiProgressPanel').isHidden());
+  check('Legacy floating annotation progress is removed',
+    await retryPage.locator('#aiProgressPanel').count() === 0);
   const retriedArticle = await retryPage.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('finlens.v1') || '{}');
     return (state.custom || []).find(article => article._url.includes('/wechat'));

@@ -9,6 +9,8 @@ const LEGACY_RECOVERY_MARKER_KEY = 'finlens.legacyRecoveryVersion';
 const LEGACY_RECOVERY_VERSION = '2026-11-12-backup-v1';
 const DATA_RESET_VERSION = '2026-11-03-feedback-reset-v1';
 const DAY_MS = 86400000;
+const LearningEvents = window.FinLensLearningEvents;
+const TaskDomain = window.FinLensTaskCenter;
 const KNOWLEDGE_CATEGORIES = {
   finance: '金融术语',
   background: '背景层',
@@ -120,6 +122,7 @@ let crawlTimer = null;
 let crawlStartTimer = null;
 let crawlRunning = false;
 let crawlDiagnostics = [];
+let activeCrawlTask = null;
 let currentAudioUrl = null;
 let backupTimer = null;
 let lastBackupAt = 0;
@@ -147,6 +150,12 @@ const expandedAISessions = new Set();
 const expandedInlineAIHistory = new Set();
 let categoryRevalidationState = null;
 let activeContentFixReview = null;
+let taskCenterFilter = 'running';
+let planCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let planSelectedDate = '';
+let activeMindMapArticleId = '';
+let mindMapNodeContexts = new Map();
+let mindMapHoverTimer = null;
 
 /* ---------------- 工具 ---------------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -231,56 +240,238 @@ function toast(msg) {
 }
 
 const AI_PROGRESS_STEPS = ['clean', 'connect', 'analyze', 'enrich', 'save'];
-let aiProgressHideTimer = null;
+const TASK_TYPE_LABELS = {
+  annotation: '文章标注',
+  'focus-batch': '词汇侧重',
+  'mind-map': '思维导图',
+  'ai-summary': 'AI 总结',
+  'knowledge-revalidation': '知识卡核验',
+  crawl: '自动抓取',
+  backup: '学习备份',
+  generic: '后台任务'
+};
 
-function beginAIProgress(label = 'AI 标注处理中') {
-  if (aiProgressHideTimer) clearTimeout(aiProgressHideTimer);
-  $('#aiProgressPanel').hidden = false;
-  $('#aiProgressLabel').textContent = label;
-  $('#aiProgressPercent').textContent = '0%';
-  $('#aiProgressBar').style.width = '0%';
-  $$('#aiProgressSteps li').forEach(item => item.className = '');
-}
-
-function updateAIProgress(step, percent, message) {
-  const index = AI_PROGRESS_STEPS.indexOf(step);
-  if (index >= 0) {
-    $$('#aiProgressSteps li').forEach((item, itemIndex) => {
-      item.classList.toggle('done', itemIndex < index);
-      item.classList.toggle('active', itemIndex === index);
-    });
-  }
-  const value = Math.max(0, Math.min(100, Number(percent) || 0));
-  $('#aiProgressPercent').textContent = `${value}%`;
-  $('#aiProgressBar').style.width = `${value}%`;
-  if (message) $('#aiProgressLabel').textContent = message;
-}
-
-function finishAIProgress(message = '标注完成') {
-  updateAIProgress('save', 100, message);
-  $$('#aiProgressSteps li').forEach(item => {
-    item.classList.remove('active');
-    item.classList.add('done');
+function startTask(type, input = {}) {
+  if (!S) return null;
+  const task = TaskDomain.createTask(S, {
+    type,
+    status: 'running',
+    title: input.title || TASK_TYPE_LABELS[type] || '后台任务',
+    subtitle: input.subtitle || '',
+    articleId: input.articleId || '',
+    message: input.message || '',
+    recovery: input.recovery || [],
+    meta: input.meta || {},
+    ...input
   });
-  aiProgressHideTimer = setTimeout(() => { $('#aiProgressPanel').hidden = true; }, 900);
+  save();
+  renderTaskCenter();
+  return task;
 }
 
-function failAIProgress(message = '标注失败') {
-  $('#aiProgressLabel').textContent = message;
-  const active = $('#aiProgressSteps li.active') || $('#aiProgressSteps li:last-child');
-  active?.classList.remove('active');
-  active?.classList.add('error');
-  aiProgressHideTimer = setTimeout(() => { $('#aiProgressPanel').hidden = true; }, 3500);
+function updateTaskState(taskOrId, patch = {}) {
+  if (!S) return null;
+  const id = typeof taskOrId === 'string' ? taskOrId : taskOrId?.id;
+  if (!id) return null;
+  const task = TaskDomain.updateTask(S, id, patch);
+  save();
+  renderTaskCenter();
+  return task;
 }
 
-function hideAIProgress() {
-  if (aiProgressHideTimer) clearTimeout(aiProgressHideTimer);
-  aiProgressHideTimer = null;
-  $('#aiProgressPanel').hidden = true;
+function finishTaskState(taskOrId, patch = {}) {
+  if (!S) return null;
+  const id = typeof taskOrId === 'string' ? taskOrId : taskOrId?.id;
+  if (!id) return null;
+  const task = TaskDomain.finishTask(S, id, patch);
+  save();
+  renderTaskCenter();
+  return task;
+}
+
+function failTaskState(taskOrId, error, recovery = []) {
+  if (!S) return null;
+  const id = typeof taskOrId === 'string' ? taskOrId : taskOrId?.id;
+  if (!id) return null;
+  const task = TaskDomain.failTask(S, id, error, recovery);
+  save();
+  renderTaskCenter();
+  return task;
+}
+
+function taskCenterSummary() {
+  return S ? TaskDomain.taskSummary(S) : { running: 0, failed: 0, success: 0, active: false, latest: null, runningTasks: [], failedTasks: [] };
+}
+
+function annotationRecoveryFor(message) {
+  if (/JSON|json|格式|finish=|parse/i.test(String(message || ''))) {
+    return ['重试标注', '切换到支持稳定 JSON 输出的模型', '测试模型连接后再试'];
+  }
+  if (/key|密钥|credential|认证|401|403/i.test(String(message || ''))) {
+    return ['在模型与抓取设置中配置 Key', '测试模型连接', '重新运行标注'];
+  }
+  return ['检查模型与网络连接', '稍后重试', '可先保存原文，配置模型后再标注'];
+}
+
+function renderTaskCenter() {
+  const card = $('#engineCard');
+  if (!card || !S) return;
+  const summary = taskCenterSummary();
+  const activeTask = [...summary.runningTasks].sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  const latest = summary.latest;
+  const dot = $('#engineDot');
+  const count = $('#taskCenterCount');
+  const track = $('#taskMiniTrack');
+  const bar = $('#taskMiniBar');
+  dot?.classList.toggle('online', summary.active);
+  dot?.classList.toggle('error', !summary.active && summary.failed > 0);
+  if (count) {
+    const total = summary.running + summary.failed;
+    count.hidden = total === 0;
+    count.textContent = String(total);
+  }
+  $('#engineName').textContent = '任务中心';
+  if (activeTask) {
+    $('#engineDesc').textContent = `${activeTask.title} · ${activeTask.progress}%`;
+  } else if (summary.failed) {
+    $('#engineDesc').textContent = `${summary.failed} 个失败`;
+  } else if (latest) {
+    $('#engineDesc').textContent = latest.status === 'success'
+      ? `最近完成 · ${latest.title}`
+      : latest.message || latest.title;
+  } else {
+    $('#engineDesc').textContent = '暂无进行中的任务';
+  }
+  if (track) track.hidden = !activeTask;
+  if (bar) bar.style.width = `${activeTask?.progress || 0}%`;
+  const modal = $('#taskCenterModal');
+  if (modal && !modal.hidden) renderTaskCenterModal();
+}
+
+function taskStatusMeta(task) {
+  if (task.status === 'running') return { label: '进行中', className: 'running' };
+  if (task.status === 'queued') return { label: '等待中', className: 'queued' };
+  if (task.status === 'success') return { label: '已完成', className: 'success' };
+  if (task.status === 'cancelled') return { label: '已取消', className: 'cancelled' };
+  return { label: '失败', className: 'failed' };
+}
+
+function renderTaskCenterModal() {
+  const list = $('#taskCenterList');
+  if (!list) return;
+  const summary = taskCenterSummary();
+  const tasks = TaskDomain.listTasks(S, taskCenterFilter);
+  $('#taskCenterSummary').textContent =
+    `进行中 ${summary.running} · 失败 ${summary.failed} · 已完成 ${summary.success}`;
+  $$('#taskCenterFilters button').forEach(button =>
+    button.classList.toggle('on', button.dataset.taskFilter === taskCenterFilter));
+  list.innerHTML = tasks.map(task => {
+    const meta = taskStatusMeta(task);
+    const recovery = task.recovery.length
+      ? `<ul class="task-recovery">${task.recovery.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`
+      : '';
+    return `<article class="task-item ${meta.className}" data-task-id="${esc(task.id)}">
+      <div class="task-item-head">
+        <span class="task-type">${esc(TASK_TYPE_LABELS[task.type] || task.type)}</span>
+        <span class="task-status">${meta.label}</span>
+        <time>${new Date(task.updatedAt).toLocaleString('zh-CN')}</time>
+      </div>
+      <b>${esc(task.title)}</b>
+      ${task.subtitle ? `<p class="task-subtitle">${esc(task.subtitle)}</p>` : ''}
+      <div class="task-progress"><i style="width:${task.progress}%"></i></div>
+      <div class="task-item-meta"><span>${task.progress}%</span><span>${esc(task.message || task.step || '')}</span></div>
+      ${task.error ? `<p class="task-error">${esc(task.error)}</p>` : ''}
+      ${recovery}
+      ${task.status === 'failed' ? `<button class="mini-btn" type="button" data-task-retry="${esc(task.id)}">${icon('rotate')}<span>重试</span></button>` : ''}
+    </article>`;
+  }).join('') || '<div class="empty-tip">当前筛选下没有任务</div>';
+}
+
+function openTaskCenter(filter = 'running') {
+  taskCenterFilter = filter;
+  const modal = $('#taskCenterModal');
+  if (!modal) return;
+  modal.hidden = false;
+  renderTaskCenterModal();
+}
+
+function closeTaskCenter() {
+  const modal = $('#taskCenterModal');
+  if (modal) modal.hidden = true;
+}
+
+function retryTask(task) {
+  if (!task) return;
+  closeTaskCenter();
+  if (task.type === 'crawl') {
+    runCrawl({ silent: false });
+    return;
+  }
+  if (task.type === 'annotation' && task.articleId) {
+    openArticle(task.articleId);
+    setTimeout(() => rerunCurrentAnnotation(), 80);
+    toast('正在重新运行文章标注');
+    return;
+  }
+  if (task.type === 'ai-summary') {
+    if (task.articleId && cur?.id !== task.articleId) openArticle(task.articleId);
+    generateTutorSummary();
+    return;
+  }
+  if (task.type === 'knowledge-revalidation') {
+    runCategoryRevalidation();
+    return;
+  }
+  if (task.type === 'focus-batch' && task.meta?.focus) {
+    openVocabManage();
+    $('#vocabManageFocus').value = task.meta.focus;
+    $('#vocabFocusScopeSeg button[data-focus-scope="selected"]')?.click();
+    const ids = new Set(task.meta.articleIds || []);
+    $$('#vocabArticleList input[data-vocab-a]').forEach(input => {
+      input.checked = ids.has(input.dataset.vocabA);
+    });
+    generateVocabFocusPreview();
+    return;
+  }
+  if (task.type === 'mind-map' && task.articleId && typeof openMindMap === 'function') {
+    openMindMap(task.articleId, { force: true });
+    return;
+  }
+  toast(task.recovery[0] || '该任务需要在原入口重新执行');
+}
+
+function wireTaskCenter() {
+  const card = $('#engineCard');
+  card?.addEventListener('click', () => openTaskCenter(taskCenterSummary().failed ? 'failed' : 'running'));
+  card?.addEventListener('keydown', (event) => {
+    if (!['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    openTaskCenter(taskCenterSummary().failed ? 'failed' : 'running');
+  });
+  $('#taskCenterModal')?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-close]')) {
+      closeTaskCenter();
+      return;
+    }
+    const filter = event.target.closest('[data-task-filter]');
+    if (filter) {
+      taskCenterFilter = filter.dataset.taskFilter;
+      renderTaskCenterModal();
+      return;
+    }
+    const retry = event.target.closest('[data-task-retry]');
+    if (retry) retryTask(S.tasks.find(task => task.id === retry.dataset.taskRetry));
+  });
 }
 
 async function requestAnnotationWithProgress(payload, label = 'AI 标注处理中') {
-  beginAIProgress(label);
+  const task = startTask('annotation', {
+    title: label,
+    subtitle: payload.title || '',
+    articleId: payload.articleId || '',
+    meta: { url: payload.url || '' },
+    message: '准备标注'
+  });
   try {
     const response = await fetch('/api/annotate-stream', {
       method: 'POST',
@@ -291,7 +482,7 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     if (!response.ok || !contentType.includes('ndjson') || !response.body) {
       const data = await response.json();
       if (!data.ok) throw new Error(data.error || '标注失败');
-      finishAIProgress('标注完成');
+      finishTaskState(task, { message: '标注完成' });
       return data.article;
     }
     const reader = response.body.getReader();
@@ -307,7 +498,14 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === 'progress') updateAIProgress(event.step, event.percent, event.message);
+        if (event.type === 'progress') {
+          updateTaskState(task, {
+            status: 'running',
+            step: event.step,
+            progress: event.percent,
+            message: event.message || ''
+          });
+        }
         if (event.type === 'result') {
           if (!event.ok) streamError = event.error || '标注失败';
           else finalArticle = event.article;
@@ -324,10 +522,10 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     }
     if (streamError) throw new Error(streamError);
     if (!finalArticle) throw new Error('模型未返回文章结果');
-    finishAIProgress('标注完成');
+    finishTaskState(task, { message: '标注完成' });
     return finalArticle;
   } catch (error) {
-    failAIProgress(error.message || '标注失败');
+    failTaskState(task, error.message || '标注失败', annotationRecoveryFor(error.message));
     throw error;
   }
 }
@@ -357,6 +555,10 @@ function loadState() {
     read: {}, words: {}, marks: {}, notes: {}, summaries: {}, tutor: {}, knowledgeTutor: {},
     dictionaries: {}, knowledgeDetails: {}, deletedArticleData: [],
     reviewSessions: {},
+    learningEvents: [],
+    studyPlans: {},
+    tasks: [],
+    mindMaps: {},
     knowledgeOverrides: {},
     knowledgeRevalidationBackups: [],
     knowledgeContentFixBackups: [],
@@ -372,7 +574,11 @@ function loadState() {
   };
   base.settings.crawlTo = base.settings.crawlTo || todayStr();
   base.settings.crawlFrom = base.settings.crawlFrom || daysAgoStr(30);
-  if (!raw) return base;
+  if (!raw) {
+    LearningEvents.ensureState(base);
+    TaskDomain.ensureState(base);
+    return base;
+  }
   const st = { ...base, ...raw, settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) } };
   st.marks = st.marks && typeof st.marks === 'object' && !Array.isArray(st.marks)
     ? Object.fromEntries(Object.entries(st.marks).map(([articleId, marks]) => [
@@ -469,6 +675,9 @@ function loadState() {
   if (!st.today || st.today.date !== todayStr()) {
     st.today = { date: todayStr(), read: 0, words: 0 };
   }
+  if (!st.mindMaps || typeof st.mindMaps !== 'object' || Array.isArray(st.mindMaps)) st.mindMaps = {};
+  LearningEvents.ensureState(st);
+  TaskDomain.ensureState(st);
   return st;
 }
 function save() {
@@ -588,13 +797,17 @@ async function boot() {
   wireNav();
   wireReader();
   wireCards();
+  wirePlan();
   wireExport();
   wireSettings();
   wireImport();
+  wireTaskCenter();
+  wireMindMap();
   wireKeyboard();
 
   renderStats();
   renderGoal();
+  renderTaskCenter();
 
   const start = ARTICLES.find(a => a.id === S.lastArticle) || ARTICLES[0];
   openArticle(start.id);
@@ -616,6 +829,7 @@ async function boot() {
 /* ---------------- 导航 ---------------- */
 const VIEW_META = {
   reader:    ['阅读台', '按文章精读，随时查词、核对术语'],
+  plan:      ['学习日历', '安排每天的精读与复习，回看学习明细'],
   cards:     ['词汇复习', '按记忆间隔复习卡片、闪现和测验'],
   knowledge: ['金融知识库', '按主题找概念、机制和案例'],
   knowledgeDetail: ['知识详解', '概念、机制、来源和相关案例'],
@@ -645,6 +859,7 @@ function switchView(v) {
   $('#viewTitle').textContent = t;
   $('#viewSub').textContent = sub;
   if (v === 'cards') renderCards();
+  if (v === 'plan') renderPlanView();
   if (v === 'knowledge') renderKB();
   if (v === 'export') { renderExport(); renderArchive(); }
 }
@@ -843,6 +1058,7 @@ function renderDoc() {
     <div class="doc-foot">
       <button class="btn" id="btnReadAloud">${icon('volume-2')}<span>全文朗读</span></button>
       <button class="btn ghost" id="btnToCards">${icon('layers')}<span>用本篇生词复习</span></button>
+      <button class="btn ghost" id="btnMindMap">${icon('brain-circuit')}<span>思维导图</span></button>
     </div>`;
 
   $('#doc').innerHTML = head + paras + foot;
@@ -862,6 +1078,10 @@ function renderDoc() {
     syncToolbar();
     resetCardRuntime();
     switchView('cards');
+  });
+  $('#btnMindMap').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openMindMap(a.id);
   });
   $('#doc').style.setProperty('--doc-size', S.settings.font + 'px');
   $('#doc').style.setProperty('font-size', S.settings.font + 'px');
@@ -1337,6 +1557,7 @@ function setRead(v, auto) {
   S.read[cur.id].ts = Date.now();
   if (v && !was) {
     S.read[cur.id].reviewCount = S.read[cur.id].reviewCount || 0;
+    recordArticleEvent('article-read', cur.id, { source: 'reader' });
     S.today.read += 1;
     touchDay();
     if (auto) toast('已读完一遍 · 计入今日进度');
@@ -1365,6 +1586,7 @@ function reviewArticle() {
   const state = S.read[cur.id] || (S.read[cur.id] = {});
   state.reviewCount = (state.reviewCount || 0) + 1;
   state.lastReviewAt = Date.now();
+  recordArticleEvent('article-review', cur.id, { source: 'reader', ts: state.lastReviewAt });
   save();
   applyModePreset('intensive');
   $('#docScroll').scrollTop = 0;
@@ -1886,29 +2108,341 @@ function toggleAnalysisImport(articleId, paragraphIndex) {
 
 async function generateTutorSummary() {
   if (!cur) return;
+  const article = cur;
   const status = $('#tutorStatus');
   if (status) status.textContent = '正在生成全文总结…';
+  const task = startTask('ai-summary', {
+    title: 'AI 全文总结',
+    subtitle: article.title,
+    articleId: article.id,
+    message: '连接模型',
+    progress: 8
+  });
   try {
     const resp = await fetch('/api/summary', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         ...(await modelRequestPayload()),
-        title: cur.title,
-        deck: cur.deck,
-        paragraphs: cur.paragraphs.map(p => p.en.replace(/\{\{|\}\}/g, '')),
+        title: article.title,
+        deck: article.deck,
+        paragraphs: article.paragraphs.map(p => p.en.replace(/\{\{|\}\}/g, '')),
         model: S.settings.model
       })
     });
+    updateTaskState(task, { progress: 68, message: '整理全文结构' });
     const data = await resp.json();
     if (!data.ok) throw new Error(data.error || '总结生成失败');
-    S.summaries[cur.id] = data.summary;
+    S.summaries[article.id] = data.summary;
     save();
     renderSide();
+    finishTaskState(task, { message: '总结已生成' });
   } catch (e) {
+    failTaskState(task, e.message || '总结生成失败', ['检查模型连接', '稍后重试', '切换到稳定模型']);
     if (status) {
       status.textContent = e.message || '总结生成失败';
       status.style.color = 'var(--danger)';
+    }
+  }
+}
+
+const MIND_MAP_KIND_LABELS = {
+  thesis: '中心论点',
+  argument: '分论点',
+  evidence: '证据',
+  implication: '结论影响',
+  detail: '补充'
+};
+
+function mindMapNodeHtml(node, article, depth = 1, ancestors = [], contexts = new Map()) {
+  if (!node?.label) return '';
+  const kind = ['thesis', 'argument', 'evidence', 'implication', 'detail'].includes(node.kind)
+    ? node.kind
+    : 'detail';
+  const ref = `mind-map-node-${contexts.size}`;
+  const path = [...ancestors, node.label];
+  const paragraphs = (node.sourceParagraphs || []).map(index => {
+    const paragraph = article.paragraphs[index - 1];
+    if (!paragraph) return null;
+    const analysis = paragraph.analysis || {};
+    const english = decodeHtmlText(paragraph.en).replace(/\{\{|\}\}/g, '');
+    const sentences = english.match(/[^.!?]+[.!?]+(?:["”']?)/g) || [english];
+    const labelTokens = [...new Set((node.label.toLowerCase().match(/[a-z]{4,}/g) || []))];
+    const ranked = sentences.map((sentence, sentenceIndex) => ({
+      sentence: sentence.trim(),
+      sentenceIndex,
+      score: labelTokens.filter(token => sentence.toLowerCase().includes(token)).length
+    }));
+    const matched = ranked.filter(item => item.score > 0).sort((left, right) => right.score - left.score);
+    const excerpt = (matched.length ? matched.slice(0, 2) : ranked.slice(0, 2))
+      .sort((left, right) => left.sentenceIndex - right.sentenceIndex)
+      .map(item => item.sentence)
+      .join(' ');
+    const zh = decodeHtmlText(paragraph.zh || '');
+    return {
+      index,
+      en: english,
+      excerpt,
+      zh,
+      zhExcerpt: zh.length > 120 ? `${zh.slice(0, 120)}…` : zh,
+      reasoning: [
+        analysis.english?.longSentence,
+        analysis.english?.grammar,
+        analysis.finance?.background,
+        analysis.finance?.relevance
+      ].filter(Boolean).join(' · ').slice(0, 160)
+    };
+  }).filter(Boolean);
+  const sourceText = [
+    node.label,
+    ...paragraphs.flatMap(paragraph => [paragraph.en, paragraph.zh, paragraph.reasoning])
+  ].join(' ').toLowerCase();
+  const keyWords = article.vocab.filter(vocab => {
+    const forms = [vocab.w, ...(vocab.forms || [])];
+    return forms.some(form => String(form || '').length > 2 && sourceText.includes(String(form).toLowerCase()));
+  }).slice(0, 6);
+  const knowledge = article.knowledge.filter(card => {
+    const aliases = [card.term, card.en, ...(card.match || [])];
+    return aliases.some(alias => String(alias || '').length > 2 && sourceText.includes(String(alias).toLowerCase()));
+  }).slice(0, 4);
+  contexts.set(ref, {
+    ref,
+    node,
+    kind,
+    path,
+    paragraphs,
+    keyWords,
+    knowledge
+  });
+  const children = (node.children || []).map(child => `
+    <div class="mind-child">${mindMapNodeHtml(child, article, depth + 1, path, contexts)}</div>`).join('');
+  return `<div class="mind-node-wrap depth-${depth} mind-node ${kind}">
+    <div class="mind-node-box" data-kind="${kind}" data-mind-node-ref="${ref}" tabindex="0" role="group" aria-label="${esc(node.label)}">
+      <div class="mind-node-kicker">
+        <span>${esc(MIND_MAP_KIND_LABELS[kind] || '补充')}</span>
+        ${(node.sourceParagraphs || []).length
+          ? `<span class="mind-node-source">${node.sourceParagraphs.map(index => `P${index}`).join(' · ')}</span>`
+          : ''}
+      </div>
+      <b>${esc(node.label)}</b>
+    </div>
+    ${children ? `<div class="mind-children">${children}</div>` : ''}
+  </div>`;
+}
+
+function renderMindMap(map, article) {
+  if (!map || !article) return;
+  activeMindMapArticleId = article.id;
+  hideMindMapHover();
+  $('#mindMapSubtitle').textContent = `${article.source} · ${article.title}`;
+  $('#mindMapSummary').textContent = map.summary || '';
+  mindMapNodeContexts = new Map();
+  const html = mindMapNodeHtml(map.root, article, 1, [], mindMapNodeContexts);
+  $('#mindMapCanvas').innerHTML = `<div class="mind-map-tree">${html}</div>`;
+}
+
+function hideMindMapHover() {
+  if (mindMapHoverTimer) clearTimeout(mindMapHoverTimer);
+  mindMapHoverTimer = null;
+  const hover = $('#mindMapHover');
+  if (hover) hover.hidden = true;
+}
+
+function scheduleHideMindMapHover() {
+  if (mindMapHoverTimer) clearTimeout(mindMapHoverTimer);
+  mindMapHoverTimer = setTimeout(() => {
+    const hover = $('#mindMapHover');
+    if (hover) hover.hidden = true;
+  }, 90);
+}
+
+function showMindMapHover(target) {
+  const context = mindMapNodeContexts.get(target?.dataset?.mindNodeRef);
+  const hover = $('#mindMapHover');
+  if (!context || !hover) return;
+  if (mindMapHoverTimer) clearTimeout(mindMapHoverTimer);
+  const paragraphHtml = context.paragraphs.length
+    ? context.paragraphs.slice(0, 2).map(paragraph => `
+      <blockquote class="mind-hover-paragraph" role="button" tabindex="0"
+        data-mind-paragraph="${paragraph.index}" title="回到原文第 ${paragraph.index} 段">
+        <span>P${paragraph.index}</span>
+        <p>${esc(paragraph.excerpt)}</p>
+        ${paragraph.zhExcerpt ? `<small>${esc(paragraph.zhExcerpt)}</small>` : ''}
+        ${paragraph.reasoning ? `<em>${esc(paragraph.reasoning)}</em>` : ''}
+      </blockquote>`).join('')
+    : '<p class="mind-hover-empty">该节点没有绑定具体段落。</p>';
+  const wordHtml = context.keyWords.length
+    ? context.keyWords.map(vocab => `<span><b>${esc(vocab.w)}</b>${esc(vocab.zh || '')}</span>`).join('')
+    : '<p class="mind-hover-empty">当前节点没有命中本篇重点词。</p>';
+  const knowledgeHtml = context.knowledge.length
+    ? context.knowledge.map(card => `<div><b>${esc(card.term)}</b><span>${esc(card.one || card.body || '')}</span></div>`).join('')
+    : '<p class="mind-hover-empty">当前节点没有直接关联知识卡。</p>';
+  hover.innerHTML = `
+    <header>
+      <span>${esc(MIND_MAP_KIND_LABELS[context.kind] || '补充')}</span>
+      <b>${esc(context.node.label)}</b>
+    </header>
+    <section class="mind-hover-chain">
+      <h4>推理链条</h4>
+      <div>${context.path.map((label, index) =>
+        `${index ? '<i>→</i>' : ''}<span>${esc(label)}</span>`).join('')}</div>
+    </section>
+    <section>
+      <h4>相关句子</h4>
+      <div class="mind-hover-paragraphs">${paragraphHtml}</div>
+    </section>
+    <div class="mind-hover-columns">
+      <section>
+        <h4>重点单词</h4>
+        <div class="mind-hover-words">${wordHtml}</div>
+      </section>
+      <section>
+        <h4>相关知识</h4>
+        <div class="mind-hover-knowledge">${knowledgeHtml}</div>
+      </section>
+    </div>`;
+  hover.hidden = false;
+  hover.style.visibility = 'hidden';
+  requestAnimationFrame(() => {
+    const rect = target.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const width = hover.offsetWidth;
+    const height = hover.offsetHeight;
+    let left = rect.right + gap;
+    if (left + width > window.innerWidth - margin) left = rect.left - width - gap;
+    left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+    let top = rect.top + Math.min(28, Math.max(0, rect.height / 2 - 12));
+    if (top + height > window.innerHeight - margin) top = window.innerHeight - height - margin;
+    hover.style.left = `${left}px`;
+    hover.style.top = `${Math.max(margin, top)}px`;
+    hover.style.visibility = 'visible';
+  });
+}
+
+function jumpToMindMapParagraph(index) {
+  if (!activeMindMapArticleId || !Number.isInteger(Number(index))) return;
+  const articleId = activeMindMapArticleId;
+  $('#mindMapModal').hidden = true;
+  hideMindMapHover();
+  switchView('reader');
+  openArticle(articleId);
+  setTimeout(() => {
+    const paragraph = $(`.para[data-i="${Number(index) - 1}"]`);
+    if (!paragraph) return;
+    $('.para.mind-jump-target')?.classList.remove('mind-jump-target');
+    paragraph.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    paragraph.classList.add('mind-jump-target');
+    paragraph.animate([
+      { background: '#f1e2b5' },
+      { background: 'transparent' }
+    ], { duration: 1600, easing: 'ease-out' });
+    setTimeout(() => paragraph.classList.remove('mind-jump-target'), 1800);
+    toast(`已定位到第 ${index} 段`);
+  }, 70);
+}
+
+function wireMindMap() {
+  $('#mindMapModal')?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-close]')) {
+      $('#mindMapModal').hidden = true;
+      hideMindMapHover();
+      return;
+    }
+    if (event.target.closest('#btnRegenerateMindMap') && activeMindMapArticleId) {
+      openMindMap(activeMindMapArticleId, { force: true });
+    }
+  });
+  const canvas = $('#mindMapCanvas');
+  canvas?.addEventListener('pointerover', event => {
+    const box = event.target.closest('[data-mind-node-ref]');
+    if (!box || box.contains(event.relatedTarget)) return;
+    showMindMapHover(box);
+  });
+  canvas?.addEventListener('pointerout', event => {
+    const box = event.target.closest('[data-mind-node-ref]');
+    if (!box || box.contains(event.relatedTarget)) return;
+    scheduleHideMindMapHover();
+  });
+  canvas?.addEventListener('focusin', event => {
+    const box = event.target.closest('[data-mind-node-ref]');
+    if (box) showMindMapHover(box);
+  });
+  canvas?.addEventListener('focusout', event => {
+    if (event.target.closest('[data-mind-node-ref]')) scheduleHideMindMapHover();
+  });
+  canvas?.addEventListener('click', event => {
+    const box = event.target.closest('[data-mind-node-ref]');
+    if (box) showMindMapHover(box);
+  });
+  canvas?.addEventListener('scroll', hideMindMapHover, { passive: true });
+  const hover = $('#mindMapHover');
+  hover?.addEventListener('pointerenter', () => {
+    if (mindMapHoverTimer) clearTimeout(mindMapHoverTimer);
+    mindMapHoverTimer = null;
+  });
+  hover?.addEventListener('pointerleave', scheduleHideMindMapHover);
+  hover?.addEventListener('click', event => {
+    const paragraph = event.target.closest('[data-mind-paragraph]');
+    if (paragraph) jumpToMindMapParagraph(Number(paragraph.dataset.mindParagraph));
+  });
+  hover?.addEventListener('keydown', event => {
+    if (!['Enter', ' '].includes(event.key)) return;
+    const paragraph = event.target.closest('[data-mind-paragraph]');
+    if (!paragraph) return;
+    event.preventDefault();
+    jumpToMindMapParagraph(Number(paragraph.dataset.mindParagraph));
+  });
+}
+
+async function openMindMap(articleId, { force = false } = {}) {
+  const article = ARTICLES.find(item => item.id === articleId);
+  if (!article) return;
+  activeMindMapArticleId = article.id;
+  $('#mindMapModal').hidden = false;
+  if (!force && S.mindMaps?.[article.id]) {
+    renderMindMap(S.mindMaps[article.id], article);
+    return;
+  }
+  $('#mindMapSubtitle').textContent = `${article.source} · ${article.title}`;
+  $('#mindMapSummary').textContent = '';
+  $('#mindMapCanvas').innerHTML = '<div class="mind-map-loading">正在梳理文章逻辑…</div>';
+  const task = startTask('mind-map', {
+    title: '生成文章思维导图',
+    subtitle: article.title,
+    articleId: article.id,
+    message: '梳理中心论点与段落逻辑',
+    progress: 12
+  });
+  if (!hasEngineCredential()) {
+    const message = '未配置模型凭据，无法生成思维导图';
+    failTaskState(task, message, ['在模型与抓取设置中配置 Key', '测试模型连接后重试']);
+    $('#mindMapCanvas').innerHTML = `<div class="mind-map-error">${esc(message)}</div>`;
+    return;
+  }
+  try {
+    updateTaskState(task, { progress: 28, message: '生成文章结构树' });
+    const response = await fetch('/api/mind-map', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...(await modelRequestPayload()),
+        title: article.title,
+        paragraphs: article.paragraphs.map(paragraph =>
+          decodeHtmlText(paragraph.en).replace(/\{\{|\}\}/g, ''))
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || '思维导图生成失败');
+    updateTaskState(task, { progress: 86, message: '整理逻辑层级与段落来源' });
+    S.mindMaps[article.id] = data.mindMap;
+    save();
+    renderMindMap(data.mindMap, article);
+    finishTaskState(task, { message: '思维导图已生成' });
+  } catch (error) {
+    failTaskState(task, error.message || '思维导图生成失败', ['检查模型连接', '重新生成导图', '换用支持稳定 JSON 输出的模型']);
+    if (activeMindMapArticleId === article.id) {
+      $('#mindMapCanvas').innerHTML = `<div class="mind-map-error">${esc(error.message || '思维导图生成失败')}</div>`;
     }
   }
 }
@@ -2451,6 +2985,7 @@ function rateWord(id, score) {
   if (!S.words[id]) ensureWord2(id);
   const relatedIds = relatedWordIds(id);
   const w = { ...aggregateWordStates(relatedIds.map(candidate => S.words[candidate])) };
+  const firstLearning = !w.learnedAt;
   w.learnedAt = w.learnedAt || Date.now();
   w.reviewEligible = true;
   w.seen = (w.seen || 0) + 1;
@@ -2467,6 +3002,17 @@ function rateWord(id, score) {
   for (const candidate of relatedIds) {
     S.words[candidate] = { ...S.words[candidate], ...w, added: S.words[candidate].added || Date.now() };
   }
+  const primaryEntry = activeVocabularyEntries().find(entry => entry.key === id);
+  recordWordEvent(
+    firstLearning ? 'word-learned' : 'word-reviewed',
+    {
+      articleId: primaryEntry?.a?.id || id.split(':')[0],
+      wordKey: id,
+      word: primaryEntry?.v?.w || id.split(':').slice(1).join(':')
+    },
+    score,
+    S.settings.cmode === 'quiz' ? 'quiz' : 'cards'
+  );
   S.today.words += 1;
   touchDay();
   save();
@@ -2797,7 +3343,17 @@ function wireCards() {
     if (S.settings.cmode !== 'flash') stopFlash();
     renderCards();
   });
-  $('#btnExportVocabCsv').addEventListener('click', exportVocabCsv);
+  $('#btnExportVocab').addEventListener('click', openVocabExport);
+  $('#vocabExportModal').addEventListener('click', (event) => {
+    if (event.target.closest('[data-close]')) {
+      $('#vocabExportModal').hidden = true;
+      return;
+    }
+    if (event.target.closest('#btnExportTodayCards')) exportTodayWordCards();
+    if (event.target.closest('#btnExportTodayCsv')) exportVocabularyCsv('today');
+    if (event.target.closest('#btnExportAllVocabCsv')) exportVocabularyCsv('all');
+    if (event.target.closest('#btnExportDueVocabCsv')) exportVocabularyCsv('due');
+  });
   $('#btnReviewHistory').addEventListener('click', openReviewHistory);
   $('#btnVocabManage').addEventListener('click', openVocabManage);
   $('#vocabManageModal').addEventListener('click', (e) => {
@@ -3001,6 +3557,12 @@ async function generateVocabFocusPreview() {
   const requestId = ++vocabFocusPreviewRequestId;
   const button = $('#btnPreviewVocabFocus');
   const status = $('#vocabFocusManageStatus');
+  const task = startTask('focus-batch', {
+    title: '生成词汇侧重预览',
+    subtitle: `${articles.length} 篇文章`,
+    message: '准备批量更新',
+    meta: { focus, articleIds: articles.map(article => article.id) }
+  });
   if (button) button.disabled = true;
   if (status) {
     status.textContent = `正在生成 ${articles.length} 篇文章的词汇差异与解析预览…`;
@@ -3011,6 +3573,10 @@ async function generateVocabFocusPreview() {
     for (let index = 0; index < articles.length; index += 1) {
       const article = articles[index];
       const base = baseArticleById(article.id);
+      updateTaskState(task, {
+        progress: Math.round(index / Math.max(1, articles.length) * 90),
+        message: `正在分析词汇与解析侧重 ${index + 1}/${articles.length} · ${article.title}`
+      });
       if (status) status.textContent = `正在分析词汇与解析侧重 ${index + 1}/${articles.length} · ${article.title}`;
       const response = await fetch('/api/focus-refresh', {
         method: 'POST',
@@ -3049,12 +3615,19 @@ async function generateVocabFocusPreview() {
       articles: previewArticles
     };
     renderVocabFocusPreview(vocabFocusPreviewState);
+    finishTaskState(task, { message: '词汇侧重预览已生成，等待确认应用' });
     if (status) {
       status.textContent = '预览已生成；确认后会同步修改文章词汇与精读解析，原文、译文、知识卡和标注不变。';
       status.style.color = 'var(--teal)';
     }
   } catch (error) {
-    if (error?.name === 'AbortError' || requestId !== vocabFocusPreviewRequestId) return;
+    if (error?.name === 'AbortError' || requestId !== vocabFocusPreviewRequestId) {
+      TaskDomain.cancelTask(S, task.id, '预览已取消');
+      save();
+      renderTaskCenter();
+      return;
+    }
+    failTaskState(task, error.message || '词汇侧重预览生成失败', ['检查模型连接', '减少批量文章数量后重试', '稍后重新生成预览']);
     clearVocabFocusPreview(`生成预览失败：${error.message || error}`);
     if (status) status.style.color = 'var(--danger)';
   } finally {
@@ -3429,9 +4002,40 @@ function closeReviewHistory() {
 }
 
 /* ================= 视图 3：知识库 ================= */
-function exportVocabCsv() {
-  const deck = activeVocabularyEntries().filter(item => item.v);
-  if (!deck.length) return toast('当前词库没有可导出的词汇');
+function todayExportWords(date = todayStr()) {
+  return LearningEvents.todayWords(S, date).map(item => {
+    const meta = wordMeta(item.wordKey);
+    return {
+      ...item,
+      a: meta.a,
+      v: meta.v || {
+        w: item.word,
+        zh: '',
+        en: '',
+        ipa: '',
+        pos: '',
+        ex: ''
+      }
+    };
+  });
+}
+
+function openVocabExport() {
+  const todayWords = todayExportWords();
+  const dueWords = deckEntriesFor('due', 'all');
+  const allWords = activeVocabularyEntries().filter(item => item.v);
+  $('#vocabExportSummary').innerHTML = `
+    <span><b>${todayWords.length}</b>今日单词</span>
+    <span><b>${dueWords.length}</b>待复习</span>
+    <span><b>${allWords.length}</b>全部词汇</span>`;
+  $('#btnExportTodayCards').disabled = todayWords.length === 0;
+  $('#btnExportTodayCsv').disabled = todayWords.length === 0;
+  $('#btnExportAllVocabCsv').disabled = allWords.length === 0;
+  $('#btnExportDueVocabCsv').disabled = dueWords.length === 0;
+  $('#vocabExportModal').hidden = false;
+}
+
+function vocabularyCsv(deck) {
   const cell = (value) => `"${String(value || '').replace(/"/g, '""')}"`;
   const rows = [['Front', 'Back', 'Definition', 'IPA', 'Part of Speech', 'Example', 'Source', 'Tags']];
   deck.forEach(({ v, a }) => {
@@ -3439,9 +4043,59 @@ function exportVocabCsv() {
     const definition = S.dictionaries[id]?.senses?.[0]?.definition || v.en || '';
     rows.push([v.w, v.zh, definition, v.ipa, v.pos, v.ex, a ? `${a.source} / ${a.title}` : '', 'FinLens;finance']);
   });
-  const csv = '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n');
-  download(`FinLens-vocab-${todayStr()}.csv`, csv, 'text/csv');
+  return '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n');
+}
+
+function exportVocabularyCsv(scope = 'all') {
+  const deck = scope === 'today'
+    ? todayExportWords()
+    : scope === 'due'
+      ? deckEntriesFor('due', 'all')
+      : activeVocabularyEntries().filter(item => item.v);
+  if (!deck.length) return toast(scope === 'today' ? '今天还没有已学习单词' : '当前词库没有可导出的词汇');
+  const csv = vocabularyCsv(deck);
+  download(`FinLens-vocab-${scope}-${todayStr()}.csv`, csv, 'text/csv');
   toast(`已导出 ${deck.length} 个词汇，可用于 Anki / Quizlet`);
+}
+
+function exportTodayWordCards() {
+  const words = todayExportWords();
+  if (!words.length) return toast('今天还没有已学习单词');
+  const cards = words.map(({ v, a, types, score }) => `
+    <article class="word-card">
+      <div class="word-card-front">
+        <span class="word-card-index">${esc((types || []).join(' / '))}</span>
+        <h2>${esc(v.w)}</h2>
+        <p>${esc(v.ipa || '')}${v.pos ? ` · ${esc(v.pos)}` : ''}</p>
+        <div class="word-card-example">${esc(v.ex || v.en || '')}</div>
+      </div>
+      <div class="word-card-back">
+        <b>${esc(v.zh || '')}</b>
+        <p>${esc(v.en || '')}</p>
+        <small>${a ? `${esc(a.source)} · ${esc(a.title)}` : 'FinLens'}${score !== null && score !== undefined ? ` · 评分 ${esc(score)}` : ''}</small>
+      </div>
+    </article>`).join('');
+  const html = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>FinLens 今日单词卡 ${todayStr()}</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:28px;background:#ede7dd;color:#2b2926;font-family:"Segoe UI","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:end;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid #cfc4b8}
+h1{margin:0;font:700 28px/1.2 Georgia,"Songti SC",serif}header p{margin:0;color:#877f77;font-size:12px}
+.word-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}
+.word-card{display:grid;grid-template-columns:1fr 1fr;min-height:230px;border:1px solid #cfc4b8;background:#faf7f1;break-inside:avoid}
+.word-card-front,.word-card-back{padding:18px}.word-card-front{border-right:1px dashed #cfc4b8}
+.word-card-index{color:#a35d56;font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+.word-card h2{margin:28px 0 7px;font:700 27px/1.1 Georgia,serif}.word-card p{margin:0;color:#5b554f;font-size:12px;line-height:1.65}
+.word-card-example{margin-top:24px;padding-top:12px;border-top:1px solid #ddd5ca;color:#5b554f;font:italic 13px/1.65 Georgia,serif}
+.word-card-back{display:flex;flex-direction:column;justify-content:center;background:#f4efe7}.word-card-back b{font-size:14px;line-height:1.7}
+.word-card-back small{margin-top:18px;color:#877f77;font-size:9px}.word-card-back p{color:#5b554f;font-size:11px}
+@media(max-width:760px){.word-grid{grid-template-columns:1fr}.word-card{grid-template-columns:1fr}.word-card-front{border-right:0;border-bottom:1px dashed #cfc4b8}}
+@media print{body{padding:8mm;background:#fff}.word-grid{grid-template-columns:1fr 1fr}.word-card{page-break-inside:avoid}}
+</style></head><body>
+<header><div><h1>今日单词卡</h1><p>${todayStr()} · ${words.length} 个单词</p></div><p>FinLens</p></header>
+<main class="word-grid">${cards}</main></body></html>`;
+  download(`FinLens-word-cards-${todayStr()}.html`, html, 'text/html');
+  toast(`已生成 ${words.length} 张今日单词卡`);
 }
 
 function allKnowledge() {
@@ -3776,6 +4430,12 @@ async function runCategoryRevalidation() {
     return;
   }
   const online = $('#revalidationOnline').checked;
+  const task = startTask('knowledge-revalidation', {
+    title: '知识卡分类核验',
+    subtitle: `${cards.length} 张知识卡`,
+    message: '准备核验',
+    meta: { online }
+  });
   button.disabled = true;
   status.style.color = 'var(--ink-3)';
   status.textContent = `正在按规则核验 ${cards.length} 张知识卡…`;
@@ -3784,6 +4444,10 @@ async function runCategoryRevalidation() {
     let coverage = KNOWLEDGE_SOURCE_COVERAGE;
     const credentials = await modelRequestPayload();
     for (let start = 0; start < cards.length; start += 120) {
+      updateTaskState(task, {
+        progress: Math.round(start / Math.max(1, cards.length) * 90),
+        message: `正在核验 ${Math.min(start + 120, cards.length)} / ${cards.length} 张知识卡`
+      });
       status.textContent = `正在核验 ${Math.min(start + 120, cards.length)} / ${cards.length} 张知识卡…`;
       const response = await fetch('/api/revalidate-category', {
         method: 'POST',
@@ -3821,7 +4485,9 @@ async function runCategoryRevalidation() {
       result.recommendation === 'review').length;
     status.textContent = `核验完成：${results.length} 张，建议修改 ${changed} 张，需人工确认 ${review} 张。默认只勾选正文证据充分的变化项。`;
     status.style.color = changed || review ? '#7a5312' : 'var(--teal)';
+    finishTaskState(task, { message: `核验完成 ${results.length} 张，建议修改 ${changed} 张` });
   } catch (error) {
+    failTaskState(task, error.message || '分类核验失败', ['检查模型连接', '关闭联网核验后重试', '缩小核验范围']);
     status.textContent = `核验失败：${error.message || error}`;
     status.style.color = 'var(--danger)';
     categoryRevalidationState.results = [];
@@ -5592,6 +6258,306 @@ function renderGoal() {
   $('#barWords').style.width = Math.min(100, S.today.words / wt * 100) + '%';
 }
 
+/* ================= 学习日历 ================= */
+function recordArticleEvent(type, articleId, options = {}) {
+  if (!articleId || !['article-read', 'article-review'].includes(type)) return null;
+  const event = LearningEvents.addEvent(S, {
+    type,
+    articleId,
+    ts: options.ts || Date.now(),
+    source: options.source || 'reader'
+  });
+  save();
+  if (activeView === 'plan') renderPlanView();
+  return event;
+}
+
+function recordWordEvent(type, word = {}, score = null, source = 'cards') {
+  if (!['word-learned', 'word-reviewed'].includes(type)) return null;
+  const event = LearningEvents.addEvent(S, {
+    type,
+    articleId: word.articleId || word.a?.id || '',
+    wordKey: word.wordKey || '',
+    word: word.word || word.v?.w || '',
+    score,
+    source,
+    ts: word.ts || Date.now()
+  });
+  save();
+  if (activeView === 'plan') renderPlanView();
+  return event;
+}
+
+function dayPlanState(date, state = S) {
+  const summary = LearningEvents.summaryForDay(state, date);
+  return {
+    plan: summary.plan,
+    summary,
+    items: summary.planItems
+  };
+}
+
+function saveDayPlan(date, patch = {}) {
+  if (!LearningEvents.normalizePlan({ date })) return null;
+  const existing = S.studyPlans[date] || {
+    date,
+    items: [],
+    readTarget: S.settings.readTarget || 1,
+    wordTarget: S.settings.wordTarget || 12,
+    note: ''
+  };
+  const plan = LearningEvents.normalizePlan({
+    ...existing,
+    ...patch,
+    date,
+    updatedAt: Date.now()
+  });
+  if (!plan) return null;
+  S.studyPlans[date] = plan;
+  save();
+  if (activeView === 'plan') renderPlanView();
+  return plan;
+}
+
+function addPlanItem(date, articleId, mode = 'read') {
+  if (!ARTICLES.some(article => article.id === articleId)) return null;
+  const existing = S.studyPlans[date] || {
+    date,
+    items: [],
+    readTarget: S.settings.readTarget || 1,
+    wordTarget: S.settings.wordTarget || 12,
+    note: ''
+  };
+  const items = [...(existing.items || []), { articleId, mode: mode === 'review' ? 'review' : 'read' }];
+  return saveDayPlan(date, { ...existing, items });
+}
+
+function removePlanItem(date, articleId, mode) {
+  const existing = S.studyPlans[date];
+  if (!existing) return;
+  saveDayPlan(date, {
+    ...existing,
+    items: (existing.items || []).filter(item => !(item.articleId === articleId && item.mode === mode))
+  });
+}
+
+function planMonthDate(day) {
+  return new Date(planCursor.getFullYear(), planCursor.getMonth(), day, 12);
+}
+
+function formatPlanDate(date, options = {}) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    ...options
+  }).format(date);
+}
+
+function planMonthLabel(date) {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
+function planStatusLabel(summary) {
+  const hasPlan = summary.plan.items.length > 0;
+  const hasActivity = summary.events.length > 0;
+  if (summary.completed) return { text: '目标完成', className: 'is-complete' };
+  if (hasActivity) return { text: '进行中', className: 'is-progress' };
+  if (hasPlan) return { text: '已安排', className: 'is-planned' };
+  return { text: '未安排', className: 'is-empty' };
+}
+
+function renderPlanDay(summary) {
+  const body = $('#planDayBody');
+  if (!body) return;
+  const articleById = new Map(ARTICLES.map(article => [article.id, article]));
+  const status = planStatusLabel(summary);
+  $('#planDayLabel').textContent = formatPlanDate(new Date(`${summary.date}T12:00:00`));
+  const statusEl = $('#planDayStatus');
+  statusEl.textContent = status.text;
+  statusEl.className = `plan-day-status ${status.className}`;
+  const planArticles = summary.plan.items.map(item => {
+    const article = articleById.get(item.articleId);
+    const completed = summary.planItems.find(candidate =>
+      candidate.articleId === item.articleId && candidate.mode === item.mode)?.completed;
+    return `<div class="plan-item ${completed ? 'is-complete' : ''}">
+      <span class="plan-mode">${item.mode === 'review' ? '复习' : '精读'}</span>
+      <button type="button" class="plan-article-link" data-open-plan-article="${esc(item.articleId)}">${esc(article?.title || item.articleId)}</button>
+      <span class="plan-item-state">${completed ? '已完成' : '待完成'}</span>
+      <button type="button" class="icon-btn sm" data-remove-plan-item="${esc(item.articleId)}" data-plan-mode="${item.mode}" title="移出计划" aria-label="移出计划">✕</button>
+    </div>`;
+  }).join('') || '<p class="empty-tip compact">当天还没有安排文章</p>';
+  const articleTitle = id => articleById.get(id)?.title || id;
+  const articleHistory = [...new Set([...summary.articlesRead, ...summary.articlesReviewed])]
+    .map(articleId => {
+      const modes = [
+        summary.articlesRead.includes(articleId) ? '精读' : '',
+        summary.articlesReviewed.includes(articleId) ? '复习' : ''
+      ].filter(Boolean);
+      return `<button type="button" class="history-article" data-open-plan-article="${esc(articleId)}">
+        <span>${esc(articleTitle(articleId))}</span><small>${modes.join(' · ')}</small>
+      </button>`;
+    }).join('') || '<p class="empty-tip compact">当天还没有已完成的文章</p>';
+  const wordChips = summary.words.map(item =>
+    `<span class="plan-word ${item.types.includes('word-learned') ? 'learned' : 'reviewed'}">${esc(item.word)}</span>`).join('')
+    || '<p class="empty-tip compact">当天还没有已学习单词</p>';
+  body.innerHTML = `
+    <div class="plan-targets">
+      <label><span>精读目标</span><input type="number" min="1" max="20" value="${summary.plan.readTarget}" data-plan-target="readTarget"></label>
+      <label><span>词汇目标</span><input type="number" min="0" max="500" value="${summary.plan.wordTarget}" data-plan-target="wordTarget"></label>
+      <div class="plan-target-state">
+        <span class="${summary.targets.readCompleted ? 'done' : ''}">文章 ${summary.readCount}/${summary.plan.readTarget}</span>
+        <span class="${summary.targets.wordsCompleted ? 'done' : ''}">单词 ${summary.words.length}/${summary.plan.wordTarget}</span>
+      </div>
+    </div>
+    <section class="plan-day-section">
+      <h3>文章计划</h3>
+      <div class="plan-items">${planArticles}</div>
+      <div class="plan-add-row">
+        <select class="sel" id="planArticleSelect">
+          <option value="">选择文章</option>
+          ${ARTICLES.map(article => `<option value="${esc(article.id)}">${esc(article.title)}</option>`).join('')}
+        </select>
+        <div class="seg seg-sm" id="planModeSeg">
+          <button type="button" data-plan-add-mode="read" class="on">精读</button>
+          <button type="button" data-plan-add-mode="review">复习</button>
+        </div>
+        <button type="button" class="mini-btn primary" id="btnAddPlanItem">${icon('plus')}<span>加入</span></button>
+      </div>
+    </section>
+    <section class="plan-day-section">
+      <h3>当日完成</h3>
+      <div class="plan-history-articles">${articleHistory}</div>
+      <div class="plan-word-counts">
+        <span>新学 <b>${summary.learnedWords.length}</b></span>
+        <span>复习 <b>${summary.reviewedWords.length}</b></span>
+      </div>
+      <div class="plan-word-list">${wordChips}</div>
+    </section>
+    <section class="plan-day-section">
+      <h3>备注</h3>
+      <textarea class="plan-note" data-plan-note maxlength="500" placeholder="记录当天计划或复盘">${esc(summary.plan.note)}</textarea>
+    </section>`;
+  body.dataset.planAddMode = 'read';
+}
+
+function renderHeatmap() {
+  const container = $('#learningHeatmap');
+  if (!container) return;
+  const cells = LearningEvents.heatmap(S, todayStr(), 26);
+  container.innerHTML = cells.map(cell => `
+    <button type="button" class="heatmap-cell level-${cell.level}" data-plan-date="${cell.date}"
+      title="${cell.date} · ${cell.articles} 篇文章 · ${cell.words} 个单词${cell.legacy ? ' · 旧版汇总' : ''}"
+      aria-label="${cell.date}，${cell.articles} 篇文章，${cell.words} 个单词"></button>`).join('');
+}
+
+function renderPlanView() {
+  if (!S || !$('#planCalendarGrid')) return;
+  if (!planSelectedDate) planSelectedDate = todayStr();
+  planCursor = new Date(planCursor.getFullYear(), planCursor.getMonth(), 1);
+  $('#planMonthLabel').textContent = planMonthLabel(planCursor);
+  const first = planMonthDate(1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+  const cells = [];
+  let monthRead = 0;
+  let monthWords = 0;
+  let activeDays = 0;
+  let completedDays = 0;
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const key = todayStr(date);
+    const summary = LearningEvents.summaryForDay(S, key);
+    const sameMonth = date.getMonth() === planCursor.getMonth();
+    if (sameMonth) {
+      monthRead += summary.readCount;
+      monthWords += summary.words.length;
+      if (summary.events.length) activeDays += 1;
+      if (summary.completed) completedDays += 1;
+    }
+    const status = planStatusLabel(summary);
+    const planned = summary.plan.items.slice(0, 3).map(item =>
+      `<i class="${item.mode}"></i>`).join('');
+    cells.push(`<button type="button" class="plan-day ${sameMonth ? '' : 'is-outside'} ${key === todayStr() ? 'is-today' : ''} ${key === planSelectedDate ? 'is-selected' : ''} ${status.className}" data-plan-date="${key}">
+      <span class="plan-day-number">${date.getDate()}</span>
+      <span class="plan-day-metrics">
+        ${summary.readCount ? `<b>${summary.readCount} 篇</b>` : ''}
+        ${summary.words.length ? `<b>${summary.words.length} 词</b>` : ''}
+      </span>
+      <span class="plan-day-dots">${planned}</span>
+    </button>`);
+  }
+  $('#planCalendarGrid').innerHTML = cells.join('');
+  $('#planMonthSummary').innerHTML = `
+    <span><b>${monthRead}</b>精读</span>
+    <span><b>${monthWords}</b>单词</span>
+    <span><b>${activeDays}</b>学习日</span>
+    <span><b>${completedDays}</b>达标日</span>`;
+  renderPlanDay(LearningEvents.summaryForDay(S, planSelectedDate));
+  renderHeatmap();
+}
+
+function wirePlan() {
+  $('#planPrevMonth')?.addEventListener('click', () => {
+    planCursor.setMonth(planCursor.getMonth() - 1);
+    renderPlanView();
+  });
+  $('#planNextMonth')?.addEventListener('click', () => {
+    planCursor.setMonth(planCursor.getMonth() + 1);
+    renderPlanView();
+  });
+  $('#planToday')?.addEventListener('click', () => {
+    const today = new Date();
+    planCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+    planSelectedDate = todayStr(today);
+    renderPlanView();
+  });
+  const root = $('#view-plan');
+  root?.addEventListener('click', (event) => {
+    const dateButton = event.target.closest('[data-plan-date]');
+    if (dateButton) {
+      planSelectedDate = dateButton.dataset.planDate;
+      const selected = new Date(`${planSelectedDate}T12:00:00`);
+      if (selected.getMonth() !== planCursor.getMonth()) planCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
+      renderPlanView();
+      return;
+    }
+    const modeButton = event.target.closest('[data-plan-add-mode]');
+    if (modeButton) {
+      $$('#planModeSeg button').forEach(button => button.classList.toggle('on', button === modeButton));
+      $('#planDayBody').dataset.planAddMode = modeButton.dataset.planAddMode;
+      return;
+    }
+    if (event.target.closest('#btnAddPlanItem')) {
+      const articleId = $('#planArticleSelect')?.value || '';
+      if (!articleId) return toast('请先选择文章');
+      addPlanItem(planSelectedDate, articleId, $('#planDayBody').dataset.planAddMode || 'read');
+      return;
+    }
+    const remove = event.target.closest('[data-remove-plan-item]');
+    if (remove) {
+      removePlanItem(planSelectedDate, remove.dataset.removePlanItem, remove.dataset.planMode);
+      return;
+    }
+    const article = event.target.closest('[data-open-plan-article]');
+    if (article) {
+      switchView('reader');
+      openArticle(article.dataset.openPlanArticle);
+    }
+  });
+  root?.addEventListener('change', (event) => {
+    const target = event.target.closest('[data-plan-target]');
+    if (target) {
+      saveDayPlan(planSelectedDate, { [target.dataset.planTarget]: Number(target.value) });
+      return;
+    }
+    const note = event.target.closest('[data-plan-note]');
+    if (note) saveDayPlan(planSelectedDate, { note: note.value });
+  });
+}
+
 /* ================= 设置 ================= */
 async function saveManualCredential(apiKey, options = {}) {
   const key = String(apiKey || '').trim();
@@ -5847,10 +6813,6 @@ function wireSettings() {
     paintCrawlStatus();
   });
   $('#btnCrawlNow').addEventListener('click', () => runCrawl({ silent: false }));
-  $('#btnCrawlDetails').addEventListener('click', () => {
-    const panel = $('#crawlErrors');
-    panel.hidden = !panel.hidden;
-  });
   $('#btnPing').addEventListener('click', checkServer);
   $('#btnReset').addEventListener('click', () => {
     if (!confirm('将清空全部学习记录（精读进度、生词本、标记、设置）。确定继续？')) return;
@@ -5897,12 +6859,7 @@ function openEngineSettings() {
 }
 
 function paintEngine() {
-  const online = !!(hasEngineCredential() && S.settings.model);
-  $('#engineName').textContent = online ? '在线模型' : '本地预标注';
-  $('#engineDesc').textContent = online
-    ? `${S.settings.model} · ${hasServerManagedCredential() ? '密钥由本地服务托管' : '连接可用'}`
-    : '内置语料可离线精读，联网后可导入与标注';
-  $('#engineDot').classList.toggle('online', online);
+  renderTaskCenter();
 }
 
 async function fetchAvailableModels(testOnly) {
@@ -6182,35 +7139,22 @@ function validateCrawlRange(from, to) {
 }
 
 function setCrawlStatus(text, bad = false) {
-  const el = $('#crawlStatus');
-  if (!el) return;
-  el.textContent = text;
-  el.style.color = bad ? 'var(--danger)' : 'var(--ink-3)';
+  if (!activeCrawlTask) return;
+  updateTaskState(activeCrawlTask, {
+    status: 'running',
+    message: text,
+    progress: bad ? activeCrawlTask.progress : Math.max(activeCrawlTask.progress, 1)
+  });
 }
 
 function renderCrawlDiagnostics() {
-  const button = $('#btnCrawlDetails');
-  const panel = $('#crawlErrors');
-  if (!button || !panel) return;
-  const hasDetails = crawlDiagnostics.length > 0;
-  button.hidden = !hasDetails;
-  if (!hasDetails) {
-    panel.hidden = true;
-    panel.innerHTML = '';
-    $('#crawlStatus').title = '';
-    return;
-  }
-  $('#crawlStatus').title = crawlDiagnostics.map(item => `${item.type}：${item.message}`).join('\n');
-  const groups = new Map();
-  crawlDiagnostics.forEach(item => {
-    if (!groups.has(item.type)) groups.set(item.type, []);
-    groups.get(item.type).push(item.message);
+  if (!activeCrawlTask) return;
+  updateTaskState(activeCrawlTask, {
+    meta: {
+      ...(activeCrawlTask.meta || {}),
+      diagnostics: crawlDiagnostics.slice(0, 40)
+    }
   });
-  panel.innerHTML = [...groups.entries()].map(([type, messages]) => `
-    <div class="crawl-error-group">
-      <b>${esc(type)} · ${messages.length}</b>
-      ${messages.map(message => `<div>${esc(message)}</div>`).join('')}
-    </div>`).join('');
 }
 
 function setCrawlDiagnostics(groups) {
@@ -6224,12 +7168,7 @@ function setCrawlDiagnostics(groups) {
 }
 
 function paintCrawlStatus() {
-  if (crawlRunning) return;
-  const feeds = parseCrawlFeeds();
-  if (!feeds.length) return setCrawlStatus('尚未配置订阅源');
-  if (!S.settings.autoCrawl) return setCrawlStatus(`已配置 ${feeds.length} 个订阅源 · 自动检查未启用`);
-  const last = S.lastCrawlAt ? new Date(S.lastCrawlAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '尚未运行';
-  setCrawlStatus(`自动检查已启用 · 每 ${S.settings.crawlIntervalMin} 分钟 · 上次 ${last}`);
+  renderTaskCenter();
 }
 
 function scheduleCrawl() {
@@ -6255,7 +7194,8 @@ async function runCrawl({ silent = false } = {}) {
   if (crawlRunning) return false;
   const feeds = parseCrawlFeeds();
   if (!feeds.length) {
-    setCrawlStatus('请先配置至少一个 RSS / Atom 订阅源', true);
+    const task = startTask('crawl', { title: '自动抓取', message: '检查订阅配置' });
+    failTaskState(task, '请先配置至少一个 RSS / Atom 订阅源', ['打开模型与抓取设置', '添加至少一个 RSS / Atom 地址']);
     return false;
   }
 
@@ -6263,11 +7203,18 @@ async function runCrawl({ silent = false } = {}) {
   try {
     range = validateCrawlRange(S.settings.crawlFrom, S.settings.crawlTo);
   } catch (e) {
-    setCrawlStatus(e.message, true);
+    const task = startTask('crawl', { title: '自动抓取', message: '检查时间窗' });
+    failTaskState(task, e.message, ['检查起止日期是否正确', '时间窗最长一年']);
     return false;
   }
 
   crawlRunning = true;
+  activeCrawlTask = startTask('crawl', {
+    title: silent ? '自动抓取' : '手动抓取',
+    subtitle: `${feeds.length} 个订阅源`,
+    message: '正在读取订阅源',
+    meta: { from: range.from, to: range.to, maxItems: S.settings.crawlMaxItems }
+  });
   const btn = $('#btnCrawlNow');
   if (btn) btn.disabled = true;
   setCrawlDiagnostics({});
@@ -6295,7 +7242,7 @@ async function runCrawl({ silent = false } = {}) {
     if (!candidates.length) {
       S.lastCrawlAt = Date.now();
       save();
-      setCrawlStatus('所选时间窗内没有新的文章');
+      finishTaskState(activeCrawlTask, { message: '所选时间窗内没有新的文章' });
       if (!silent) toast('所选时间窗内没有新的文章');
       return false;
     }
@@ -6303,7 +7250,11 @@ async function runCrawl({ silent = false } = {}) {
     const attemptLimit = Math.min(candidates.length, maxItems + 20);
     for (let index = 0; index < attemptLimit && imported < maxItems; index++) {
       const item = candidates[index];
-      setCrawlStatus(`抓取 ${imported + 1}/${maxItems} · 尝试 ${index + 1}/${attemptLimit} · ${item.title}`);
+      updateTaskState(activeCrawlTask, {
+        status: 'running',
+        progress: Math.round(index / Math.max(1, attemptLimit) * 90),
+        message: `抓取 ${imported + 1}/${maxItems} · 尝试 ${index + 1}/${attemptLimit} · ${item.title}`
+      });
       try {
         const pageResp = await fetch('/api/fetch?url=' + encodeURIComponent(item.url));
         const pageData = await pageResp.json();
@@ -6363,15 +7314,23 @@ async function runCrawl({ silent = false } = {}) {
     setCrawlDiagnostics({ '订阅源失败': sourceErrors, '正文抓取失败': articleErrors, '处理提示': warnings });
     const errorSuffix = errors.length ? ` · ${errors.length} 项失败` : '';
     const warningSuffix = warnings.length ? ` · ${warnings[0]}` : '';
-    setCrawlStatus(`已导入 ${imported} 篇${errorSuffix}${warningSuffix}`, imported < maxItems);
+    const recovery = [...sourceErrors, ...articleErrors, ...warnings]
+      .slice(0, 6)
+      .map(item => String(item).slice(0, 240));
+    if (errors.length || warnings.length) {
+      failTaskState(activeCrawlTask, `已导入 ${imported} 篇${errorSuffix}${warningSuffix}`, recovery);
+    } else {
+      finishTaskState(activeCrawlTask, { message: `已导入 ${imported} 篇` });
+    }
     if (!silent || imported) toast(`自动抓取完成：新增 ${imported} 篇${errorSuffix}${warningSuffix}`);
     return imported > 0;
   } catch (e) {
-    setCrawlStatus('抓取失败：' + (e.message || e), true);
+    failTaskState(activeCrawlTask, '抓取失败：' + (e.message || e), ['检查订阅源是否可访问', '检查网络连接', '稍后重试']);
     if (!silent) toast('抓取失败：' + (e.message || e));
     return false;
   } finally {
     crawlRunning = false;
+    activeCrawlTask = null;
     if (btn) btn.disabled = false;
   }
 }
@@ -7419,7 +8378,6 @@ function persistCustom(art) {
 function openExistingImportedArticle(url) {
   const existing = ARTICLES.find(article => article._url === url);
   if (!existing) return false;
-  hideAIProgress();
   $('#importModal').hidden = true;
   $('#engineModal').hidden = true;
   switchView('reader');
@@ -7562,7 +8520,6 @@ async function rerunCurrentAnnotation() {
 
 function closeImportAndOpen(art, message) {
   clearImportFailure();
-  hideAIProgress();
   $('#importModal').hidden = true;
   $('#engineModal').hidden = true;
   switchView('reader');
@@ -7795,6 +8752,9 @@ function wireKeyboard() {
       hideSelectionAction();
       $('#settingsModal').hidden = true;
       $('#engineModal').hidden = true;
+      closeTaskCenter();
+      $('#vocabExportModal').hidden = true;
+      $('#mindMapModal').hidden = true;
       $('#importModal').hidden = true;
       clearImportFailure();
       stopFlash();
@@ -7804,8 +8764,8 @@ function wireKeyboard() {
       return;
     }
     if (e.target.matches('input, textarea, select')) return;
-    if (['1', '2', '3', '4'].includes(k)) {
-      switchView(['reader', 'cards', 'knowledge', 'export'][+k - 1]);
+    if (['1', '2', '3', '4', '5'].includes(k)) {
+      switchView(['reader', 'plan', 'cards', 'knowledge', 'export'][+k - 1]);
     }
     if (k === 't') {
       const order = ['on', 'hover', 'off'];

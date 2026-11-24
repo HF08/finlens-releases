@@ -320,17 +320,19 @@ await regression(async (p) => {
   await p.locator('.nav-item[data-view="cards"]').click();
   const refill = p.locator('#btnRefill');
   if (await refill.count()) await refill.click();
-  const visible = await p.locator('#btnExportVocabCsv').isVisible();
-  const downloadPromise = visible ? p.waitForEvent('download') : null;
-  if (visible) await p.locator('#btnExportVocabCsv').click();
-  const download = visible ? await downloadPromise : null;
+  const visible = await p.locator('#btnExportVocab').isVisible();
+  if (visible) await p.locator('#btnExportVocab').click();
+  const modalVisible = visible && await p.locator('#vocabExportModal').isVisible();
+  const downloadPromise = modalVisible ? p.waitForEvent('download') : null;
+  if (modalVisible) await p.locator('#btnExportAllVocabCsv').click();
+  const download = modalVisible ? await downloadPromise : null;
   let csv = '';
   if (download) {
     const file = path.join(OUT, 'regression-vocab.csv');
     await download.saveAs(file);
     csv = fs.readFileSync(file, 'utf8');
   }
-  ok('Vocabulary CSV export is available', visible && csv.includes('Front') && csv.includes('surge'));
+  ok('Vocabulary CSV export is available', visible && modalVisible && csv.includes('Front') && csv.includes('surge'));
 });
 
 await regression(async (p) => {

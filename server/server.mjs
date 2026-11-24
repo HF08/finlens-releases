@@ -1545,6 +1545,84 @@ ${(paragraphs || []).map((p, i) => `[${i + 1}] ${p}`).join('\n')}`;
   return summary;
 }
 
+const MIND_MAP_KINDS = new Set(['thesis', 'argument', 'evidence', 'implication', 'detail']);
+
+function cleanMindMapLabel(value, max = 80) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function normalizeMindMapSourceParagraphs(value) {
+  const list = Array.isArray(value)
+    ? value
+    : Number.isInteger(value) ? [value] : [];
+  return [...new Set(list
+    .map(Number)
+    .filter(number => Number.isInteger(number) && number >= 1 && number <= 50))]
+    .slice(0, 8);
+}
+
+function normalizeMindMap(value, fallback = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  let nodeCount = 0;
+  const walk = (node, depth) => {
+    if (!node || nodeCount >= 40 || depth > 4) return null;
+    const input = typeof node === 'string' ? { label: node } : node;
+    const label = cleanMindMapLabel(input.label || input.title || input.term);
+    if (!label) return null;
+    nodeCount += 1;
+    const children = depth < 4
+      ? (Array.isArray(input.children) ? input.children : [])
+          .map(child => walk(child, depth + 1))
+          .filter(Boolean)
+          .slice(0, 12)
+      : [];
+    return {
+      label,
+      kind: MIND_MAP_KINDS.has(input.kind) ? input.kind : depth === 1 ? 'thesis' : 'detail',
+      sourceParagraphs: normalizeMindMapSourceParagraphs(
+        input.sourceParagraphs || input.paragraphs || input.paragraph
+      ),
+      children
+    };
+  };
+  const root = walk(source.root || source, 1);
+  if (!root) throw new Error('思维导图缺少有效根节点');
+  return {
+    title: cleanMindMapLabel(source.title || fallback.title || '文章思维导图', 120),
+    summary: cleanMindMapLabel(source.summary || fallback.summary || '', 300),
+    root,
+    nodeCount,
+    generatedAt: Date.now()
+  };
+}
+
+function buildMindMapPrompt({ title, paragraphs }) {
+  return `你是财经文章逻辑编辑。请把下面的文章整理成可用于学习的思维导图，严格按原文逻辑组织，不补充原文没有的事实。
+输出严格 JSON，不要 Markdown，不要代码块。
+
+要求：
+1. 根节点是文章的中心论点或核心问题，kind 使用 thesis。
+2. 一级分支优先按文章论证结构拆成 2-5 个分论点，kind 使用 argument。
+3. 证据、数据、案例放入 evidence；结论、影响或行动含义放入 implication；必要的解释放入 detail。
+4. 每个节点 label 不超过 60 个中文字符；children 最多 6 个。
+5. 每个节点尽量给出 sourceParagraphs，填写对应正文段落编号，使用 1 开始的整数数组。
+6. 总节点数不得超过 40，树深度不得超过 4。
+
+JSON 结构：
+{"title":"文章标题","summary":"一句话概括导图结构","root":{"label":"中心论点","kind":"thesis","sourceParagraphs":[1],"children":[{"label":"分论点","kind":"argument","sourceParagraphs":[1,2],"children":[{"label":"证据或结论","kind":"evidence","sourceParagraphs":[2],"children":[]}]}]}}
+
+标题：${title || '(unknown)'}
+正文：
+${(paragraphs || []).map((paragraph, index) => `[${index + 1}] ${paragraph}`).join('\n')}`;
+}
+
+async function generateMindMap(body) {
+  const { title, paragraphs } = body;
+  if (!Array.isArray(paragraphs) || !paragraphs.length) throw new Error('缺少文章正文，无法生成思维导图');
+  const result = await requestLLMJson(body, buildMindMapPrompt({ title, paragraphs }));
+  return normalizeMindMap(result, { title });
+}
+
 const KNOWLEDGE_TYPE_VALUES = new Set(['concept', 'phenomenon', 'mechanism', 'method']);
 const RESEARCH_DOMAIN_NAMES = {
   'reuters.com': 'Reuters',
@@ -3267,6 +3345,16 @@ async function handleRequest(req, res) {
     }
   }
 
+  if (p === '/api/mind-map' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const mindMap = await generateMindMap(body);
+      return json(res, 200, { ok: true, mindMap });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
   if (p === '/api/ask' && req.method === 'POST') {
     try {
       const body = JSON.parse(await readBody(req));
@@ -3352,7 +3440,9 @@ export {
   buildVocabularyPrompt,
   buildCompactVocabularyPrompt,
   buildAnalysisPrompt,
-  buildCompactAnalysisPrompt
+  buildCompactAnalysisPrompt,
+  buildMindMapPrompt,
+  normalizeMindMap
 };
 
 const isDirectRun = process.argv[1] &&

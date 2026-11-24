@@ -488,7 +488,8 @@ try {
   await crawlPage.locator('[data-open-engine]').first().click();
   await crawlPage.locator('#btnCrawlNow').click();
   await crawlPage.waitForFunction(
-    () => document.querySelector('#crawlStatus')?.textContent.includes('已导入 2 篇'),
+    () => taskCenterSummary().latest?.type === 'crawl' &&
+      ['success', 'failed'].includes(taskCenterSummary().latest?.status),
     null,
     { timeout: 10000 }
   );
@@ -497,12 +498,16 @@ try {
     crawlState.custom?.length === 2 &&
     crawlState.custom.every(article => /article-[34]$/.test(article._url)),
     (crawlState.custom || []).map(article => article._url).join(', '));
-  check('Crawler keeps detailed source and article failures for review',
-    (await crawlPage.locator('#crawlStatus').innerText()).includes('3 项失败') &&
-    await crawlPage.locator('#btnCrawlDetails').isVisible(),
-    await crawlPage.locator('#crawlStatus').innerText());
-  await crawlPage.locator('#btnCrawlDetails').click();
-  const detailText = await crawlPage.locator('#crawlErrors').innerText();
+  const crawlTask = crawlState.tasks?.find(task => task.type === 'crawl');
+  check('Crawler keeps failures in the unified task center',
+    crawlTask?.status === 'failed' &&
+    /3 项失败/.test(crawlTask.message || '') &&
+    crawlTask.recovery?.length >= 3,
+    JSON.stringify(crawlTask));
+  await crawlPage.locator('#engineModal .modal-head [data-close]').click();
+  await crawlPage.locator('#engineCard').click();
+  await crawlPage.locator('#taskCenterModal [data-task-filter="failed"]').click();
+  const detailText = await crawlPage.locator('#taskCenterModal').innerText();
   check('Crawler failure details identify the feed and rejected article bodies',
     detailText.includes('broken-feed.xml') &&
     detailText.includes('Crawl candidate 1') &&

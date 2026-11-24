@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FinLens · 财经外刊学习工作台</title>
 <link rel="icon" type="image/png" href="src/assets/finlens-icon.png">
-<link rel="stylesheet" href="src/styles.css?v=20261124-public-v49">
+<link rel="stylesheet" href="src/styles.css?v=20261125-public-workspace-v50">
 </head>
 <body>
 
@@ -118,6 +118,18 @@
     <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76z"/>
     <path d="m9 12 2 2 4-4"/>
   </symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+  </symbol>
+  <symbol id="i-calendar-days" viewBox="0 0 24 24">
+    <path d="M8 2v4M16 2v4"/>
+    <rect width="18" height="18" x="3" y="4" rx="2"/>
+    <path d="M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/>
+  </symbol>
+  <symbol id="i-brain-circuit" viewBox="0 0 24 24">
+    <path d="M12 5a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V8a3 3 0 0 0-3-3Z"/>
+    <path d="M9 8H6a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h3M15 8h3a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-3M12 2v3M12 19v3"/>
+  </symbol>
 </svg>
 
 <div class="app">
@@ -135,6 +147,9 @@
     <nav class="nav" id="nav">
       <button class="nav-item is-active" data-view="reader" aria-current="page">
         <span class="ni-ico"><svg class="ui-icon"><use href="#i-book-open"></use></svg></span><span class="ni-label">阅读台</span><span class="ni-badge" id="navArticles">0</span>
+      </button>
+      <button class="nav-item" data-view="plan">
+        <span class="ni-ico"><svg class="ui-icon"><use href="#i-calendar-days"></use></svg></span><span class="ni-label">学习日历</span>
       </button>
       <button class="nav-item" data-view="cards">
         <span class="ni-ico"><svg class="ui-icon"><use href="#i-layers"></use></svg></span><span class="ni-label">词汇复习</span><span class="ni-badge" id="navDue">0</span>
@@ -162,13 +177,14 @@
       </div>
     </div>
 
-    <div class="rail-card engine-card" id="engineCard">
+    <div class="rail-card engine-card task-card" id="engineCard" role="button" tabindex="0" aria-label="打开任务中心">
       <div class="engine-head">
         <span class="dot" id="engineDot"></span>
-        <span id="engineName">本地预标注</span>
+        <span id="engineName">任务中心</span>
+        <span class="task-count" id="taskCenterCount" hidden>0</span>
       </div>
-      <p id="engineDesc">内置语料可离线精读，联网后可导入与标注</p>
-      <button class="mini-btn wide" data-open-engine>模型与抓取</button>
+      <p id="engineDesc">暂无进行中的任务</p>
+      <div class="task-mini-track" id="taskMiniTrack" hidden><i id="taskMiniBar"></i></div>
     </div>
   </aside>
 
@@ -301,6 +317,56 @@
       </div>
     </section>
 
+    <!-- ---------- 视图 2：学习日历 ---------- -->
+    <section class="view" id="view-plan">
+      <div class="plan-page">
+        <header class="plan-page-head">
+          <div class="plan-month-controls">
+            <button class="mini-btn" id="planPrevMonth" type="button">上月</button>
+            <button class="mini-btn" id="planToday" type="button">今天</button>
+            <button class="mini-btn" id="planNextMonth" type="button">下月</button>
+            <h2 id="planMonthLabel"></h2>
+          </div>
+          <div class="plan-month-summary" id="planMonthSummary"></div>
+        </header>
+
+        <div class="plan-workbench">
+          <section class="plan-calendar-band">
+            <div class="plan-weekdays" aria-hidden="true">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+            </div>
+            <div class="plan-calendar-grid" id="planCalendarGrid"></div>
+          </section>
+
+          <aside class="plan-day-panel">
+            <div class="plan-day-head">
+              <div>
+                <span>当日安排</span>
+                <h2 id="planDayLabel"></h2>
+              </div>
+              <span class="plan-day-status" id="planDayStatus"></span>
+            </div>
+            <div class="plan-day-body" id="planDayBody"></div>
+          </aside>
+        </div>
+
+        <section class="plan-heatmap-band">
+          <div class="plan-section-head">
+            <div>
+              <h2>学习热力图</h2>
+              <p>最近 26 周</p>
+            </div>
+            <div class="heatmap-legend">
+              <span>少</span><i data-level="0"></i><i data-level="1"></i><i data-level="2"></i><i data-level="3"></i><i data-level="4"></i><span>多</span>
+            </div>
+          </div>
+          <div class="heatmap-scroll">
+            <div class="heatmap-grid" id="learningHeatmap"></div>
+          </div>
+        </section>
+      </div>
+    </section>
+
     <!-- ---------- 视图 2：词汇闪卡 ---------- -->
     <section class="view" id="view-cards">
       <div class="cards-wrap">
@@ -317,7 +383,7 @@
           </div>
           <button class="mini-btn" id="btnReviewHistory" title="打开已复习回顾侧栏"><svg class="ui-icon"><use href="#i-history"></use></svg><span>复习记录</span></button>
           <button class="mini-btn" id="btnVocabManage" title="按文章导入或清理词汇库"><svg class="ui-icon"><use href="#i-sliders"></use></svg><span>词汇库</span></button>
-          <button class="mini-btn" id="btnExportVocabCsv" title="导出当前词库为 Anki / Quizlet 可导入 CSV"><svg class="ui-icon"><use href="#i-download"></use></svg><span>导出 CSV</span></button>
+          <button class="mini-btn" id="btnExportVocab" title="导出今日单词卡或词汇表"><svg class="ui-icon"><use href="#i-download"></use></svg><span>导出词汇</span></button>
         </div>
 
         <div class="deck-context" id="deckContext"></div>
@@ -774,11 +840,31 @@
         </div>
         <div class="inline-actions">
           <button class="mini-btn" id="btnCrawlNow">立即检查更新</button>
-          <span class="test-out" id="crawlStatus">尚未配置</span>
-          <button class="mini-btn" id="btnCrawlDetails" hidden>失败详情</button>
         </div>
-        <div class="crawl-errors" id="crawlErrors" hidden></div>
       </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 任务中心 ============ -->
+<div class="modal" id="taskCenterModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body task-center-body">
+    <div class="modal-head">
+      <h3>任务中心</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="task-center-toolbar">
+      <div class="seg seg-sm" id="taskCenterFilters">
+        <button type="button" data-task-filter="running" class="on">进行中</button>
+        <button type="button" data-task-filter="failed">失败</button>
+        <button type="button" data-task-filter="history">历史</button>
+        <button type="button" data-task-filter="all">全部</button>
+      </div>
+      <span id="taskCenterSummary"></span>
+    </div>
+    <div class="modal-scroll">
+      <div class="task-center-list" id="taskCenterList"></div>
     </div>
   </div>
 </div>
@@ -906,6 +992,74 @@
   </div>
 </div>
 
+<!-- 词汇导出 -->
+<div class="modal" id="vocabExportModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body vocab-export-body">
+    <div class="modal-head">
+      <h3>导出词汇</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <div class="vocab-export-summary" id="vocabExportSummary"></div>
+      <section class="vocab-export-option">
+        <div>
+          <h4>今日已学习单词卡片</h4>
+          <p>可打印为 PDF；卡片包含单词、释义、例句和来源。</p>
+        </div>
+        <button class="mini-btn primary" id="btnExportTodayCards" type="button">下载卡片 HTML</button>
+      </section>
+      <section class="vocab-export-option">
+        <div>
+          <h4>今日词汇 CSV</h4>
+          <p>只导出今天学过或复习过的单词。</p>
+        </div>
+        <button class="mini-btn" id="btnExportTodayCsv" type="button">下载今日 CSV</button>
+      </section>
+      <section class="vocab-export-option">
+        <div>
+          <h4>全部词汇 CSV</h4>
+          <p>保留 Anki / Quizlet 可导入字段。</p>
+        </div>
+        <button class="mini-btn" id="btnExportAllVocabCsv" type="button">下载全部 CSV</button>
+      </section>
+      <section class="vocab-export-option">
+        <div>
+          <h4>当前待复习 CSV</h4>
+          <p>只包含已经学过且到期的单词。</p>
+        </div>
+        <button class="mini-btn" id="btnExportDueVocabCsv" type="button">下载待复习 CSV</button>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- 文章思维导图 -->
+<div class="modal" id="mindMapModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body mind-map-body">
+    <div class="modal-head">
+      <div>
+        <h3>文章思维导图</h3>
+        <p class="mind-map-subtitle" id="mindMapSubtitle"></p>
+      </div>
+      <div class="mind-map-actions">
+        <button class="mini-btn" id="btnRegenerateMindMap" type="button">重新生成</button>
+        <button class="icon-btn" data-close>✕</button>
+      </div>
+    </div>
+    <div class="mind-map-summary" id="mindMapSummary"></div>
+    <div class="mind-map-legend" aria-label="导图节点类型">
+      <span class="thesis">中心论点</span>
+      <span class="argument">分论点</span>
+      <span class="evidence">证据</span>
+      <span class="implication">结论影响</span>
+    </div>
+    <div class="mind-map-canvas" id="mindMapCanvas"></div>
+    <div class="mind-map-hover" id="mindMapHover" hidden></div>
+  </div>
+</div>
+
 <!-- 释义浮层 -->
 <div class="popover" id="popover" hidden></div>
 <div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="所选文字操作" hidden>
@@ -914,23 +1068,11 @@
 </div>
 <!-- 轻提示 -->
 <div class="toast" id="toast" hidden></div>
-<div class="ai-progress-panel" id="aiProgressPanel" hidden>
-  <div class="ai-progress-head">
-    <b id="aiProgressLabel">AI 标注处理中</b>
-    <span id="aiProgressPercent">0%</span>
-  </div>
-  <div class="ai-progress-track"><i id="aiProgressBar"></i></div>
-  <ol class="ai-progress-steps" id="aiProgressSteps">
-    <li data-progress-step="clean">正文清洗与质量校验</li>
-    <li data-progress-step="connect">连接 AI 模型</li>
-    <li data-progress-step="analyze">分段翻译与质量分析</li>
-    <li data-progress-step="enrich">生成词汇、知识卡与权威依据</li>
-    <li data-progress-step="save">保存文章</li>
-  </ol>
-</div>
 
 <script src="data/articles.js"></script>
 <script src="data/verified-knowledge-corrections.js"></script>
-<script src="src/app.js?v=20261124-public-v49"></script>
+<script src="src/learning-events.js"></script>
+<script src="src/task-center.js"></script>
+<script src="src/app.js?v=20261125-public-workspace-v50"></script>
 </body>
 </html>

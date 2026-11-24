@@ -1,6 +1,6 @@
 # FinLens · 财经外刊学习工作台
 
-把「读外刊」变成一条可闭环的学习流水线：**抓取 → 逐段精读 → 词汇与金融知识双标注 → 间隔重复 → 讲义归档**。
+把「读外刊」变成一条可闭环的学习流水线：**抓取 → 逐段精读 → 词汇与金融知识双标注 → 间隔重复 → 计划复盘 → 讲义归档**。
 零构建、核心学习功能可离线使用；在线模型标注、Edge 朗读和 RSS 更新需要联网。
 
 ---
@@ -65,7 +65,7 @@ npm run dictionary:build
 | ① 内容抓取 | 定时爬虫 / 统一接口 / 时间线列表 | `/api/feed` 解析 RSS / Atom 并按最长一年的日期窗过滤；`/api/fetch` 支持普通网页和公众号正文；`/api/document` 支持文档上传；提供 Fed、BIS、ECB、SEC、CNBC 推荐源 |
 | ② 翻译与词汇标注 | 逐段对照 / 交互注释 / 词汇浮层 | 默认先显示原文；点词先给当前语境，可再进入词典详解；详细模式展示按语法类型标注的词形转换。正文中选中任意英文单词可直接查词，选中句子仍只显示标注操作。支持音标、词形、同义词、IELTS/TOEFL/金融侧重、例句和生词本。学习侧重通过 `/api/focus-refresh` 原子更新词汇与精读解析 |
 | ③ 金融知识批注 | 大模型接口 / 文中检索 / 行内批注 / 补充总结 | 每段分离英语层（长难句、语法逻辑、表达）和金融层（术语、机制背景、文章关联）；AI 总结与追问使用专门金融教学提示词 |
-| ④ 学习产出与归档 | 一键讲义 / 词汇闪现 / 主题归档 | Markdown 讲义导出（可选译文/词汇表/知识卡/个人标记）、按所选文章打印/存为 PDF、词汇 CSV（Anki/Quizlet 可导入）、JSON 备份与恢复、词汇闪现与测验、主题掌握度与连续天数统计 |
+| ④ 学习产出与归档 | 一键讲义 / 词汇闪现 / 主题归档 | Markdown 讲义导出（可选译文/词汇表/知识卡/个人标记）、按所选文章打印/存为 PDF、全部/今日/待复习词汇 CSV、今日单词卡 HTML、JSON 备份与恢复、词汇闪现与测验、主题掌握度与连续天数统计 |
 
 自动抓取在**应用运行期间**按配置间隔运行；Windows 桌面版最小化或关闭到托盘后仍会继续。配置列表 1 为 Fed、BIS、ECB、SEC、CNBC 五个官方源；配置列表 2 为 CNBC Top、CNBC Markets、Fortune、NPR Business、SEC、ECB、FRED Blog 七个已验证源。列表 2 只保留“RSS 可读且正文页可抓取”的源；MarketWatch 与 Nasdaq 虽提供 RSS，但正文页分别返回 401/403，因此已移出默认配置。自动检查开关默认关闭，避免后台无提示请求。
 订阅源通过 RSS / Atom 提供历史条目；日期窗只能筛选源站实际提供的内容，不能保证所有站点都能回溯完整一年。
@@ -103,6 +103,11 @@ npm run dictionary:build
 - **模式隔离**：卡片、测验、闪现分别保存各自的队列和位置；词汇库管理中的筛选只影响卡片和测验，闪现固定使用全部词汇，不受到期、学习状态或筛选影响
 - **词汇状态只读**：阅读台侧栏的“未收录 / 未学习 / 待复习 / 已安排”徽标由词汇库记录自动计算，不能点击修改；只有卡片或测验评分会更新学习状态与到期时间
 - **回顾与日志**：词汇侧栏可查看已复习记录；学习状态自动写入 `data/backups/` 并保留最近 20 份
+- **学习事件账本**：标记文章已学习、开始文章复习、首次评分单词和后续单词复习都会写入按日事件；历史日历按真实事件显示读过的文章、新学与复习的单词
+- **学习日历与计划**：日历可为每一天指定精读或复习文章，设置文章/词汇目标和备注；选中日期可查看实际完成明细、目标状态和最近 26 周学习热力图。旧数据中无法还原的日期标记为旧版汇总，不伪造明细
+- **统一任务中心**：文章标注、词汇侧重批处理、AI 总结、知识卡核验和自动抓取共用持久任务状态。左下任务卡显示运行中任务和缩略进度，展开后可按进行中、失败、历史和全部筛选，查看失败原因、恢复建议并重试
+- **文章思维导图**：文章末尾可按“中心论点 → 分论点 → 证据 → 结论/影响”生成横向逻辑树，节点保留正文段落来源；悬停或聚焦节点可查看推理链、相关句子、重点单词和关联知识卡，点击“相关句子”会关闭导图并滚动高亮原文对应段落。导图按文章缓存，可重新生成；服务端限制树深度、节点数和标签长度，异常输出不会覆盖已保存导图
+- **单词卡导出**：词汇页支持导出今日已学习单词卡片 HTML、今日词汇 CSV、全部词汇 CSV 和当前待复习 CSV；今日卡片为自包含可打印 HTML，不依赖外部资源
 - **词典分层**：ECDICT 提供离线中英释义、音标、词性和词形变化；可选 Merriam-Webster Learner’s 提供独立权威释义。韦氏结果只作当前会话展示，不写入本地持久缓存，也不会发送给模型继续加工
 
 ---
@@ -110,6 +115,8 @@ npm run dictionary:build
 ## 验证结果
 
 `tests/verify.mjs` 覆盖原有学习闭环（71/71），`tests/feedback.mjs` 覆盖 2026-10 反馈、固定 Feed 配置、CC Switch 与手输密钥的服务端托管（55/55），`tests/feedback-v2.mjs` 覆盖正文深度清洗、知识分类强制校验、金融与实体产业边界、风险与制度边界、分析方法与工具边界、中文方法证据、金融估值交叉、分析模型证据链、AI agents 与 AI 交易重定价、金融机制与分析方法分离、通用背景兜底、消费营销与企业管理边界、导入弹窗焦点稳定性、健康公平与股权歧义、健康科研 funding gap、失业持续期与债券久期、交叉板块、分类依据折叠、知识类型与联网来源核验、词汇与解析侧重同步刷新、批量预览与应用、失败回滚、稳定卡片与测验队列、刷新后队列恢复、已完成词清理后的当前位置保持、三种词汇模式隔离、只读词汇状态、段落/句子标注与笔记、选区查词、知识卡副标题层级、遗忘曲线、左栏学习状态、测试备份隔离和移动端侧重管理（154/154）。新增 `tests/focus-analysis-and-forms.mjs`（1/1）验证词形转换展示，以及词汇成功但解析失败时不写入半套结果。分类专项由 `tests/classification-research.mjs`（13/13）、`tests/knowledge-card-verification.mjs`（4/4）和 `tests/category-revalidation.mjs`（26/26）覆盖，新增案例不参与分类、证据分级、证据不足保护、独立交叉与否定片段展示、无来源百分比案例告警、完整当前正文对比、分类应用与撤销、卡内核验入口和移动端确认窗口；`tests/ai-data-management.mjs`（13/13）、`tests/export-archive.mjs`（20/20）和 `tests/term-highlighting.mjs`（5/5）覆盖问答历史、文章数据管理、产出归档与术语高亮。`tests/github-import.mjs` 覆盖 Economist GitHub EPUB（12/12），`tests/live-resources.mjs` 覆盖真实资源与配置列表 2（7/7，需运行服务具备联网权限），`tests/build-ecdict.mjs` 覆盖词库构建（4/4），`tests/dictionary.mjs` 覆盖离线词典、词形转换与韦氏适配（17/17），`tests/article-management.mjs` 覆盖导入兜底、阅读页失败重跑、抓取补位、术语高亮和文章管理（28/28），`tests/reset.mjs` 覆盖一次性数据重置（3/3）：
+
+学习工作台 V2 新增测试覆盖事件回填与按日去重、任务生命周期与保留上限、任务中心失败重试、日历计划与热力图、今日单词卡/CSV 导出、思维导图结构清洗/生成/缓存/响应式布局：`tests/learning-events.mjs`、`tests/task-center.mjs`、`tests/task-center-ui.mjs`、`tests/learning-calendar.mjs`、`tests/vocab-export.mjs`、`tests/mind-map.mjs`。
 
 ```
 node tests/verify.mjs      # 需先启动 server
@@ -123,6 +130,12 @@ node tests/feedback-v2.mjs        # 验证 2026-11-03 全部反馈
 node tests/category-revalidation.mjs # 验证分类预览、应用、撤销和正文/案例确认
 node tests/export-archive.mjs     # 验证精读选段、知识卡和 PDF 产出归档
 node tests/ai-data-management.mjs # 验证问答历史与文章数据清理/恢复
+node tests/learning-events.mjs    # 验证学习事件、旧数据回填、计划和热力图
+node tests/task-center.mjs         # 验证任务状态机、失败与保留上限
+node tests/task-center-ui.mjs      # 验证任务中心缩略进度、筛选和重试
+node tests/learning-calendar.mjs   # 验证日历计划、历史明细、目标与移动端
+node tests/vocab-export.mjs        # 验证今日单词卡和三类 CSV 导出
+node tests/mind-map.mjs            # 验证导图生成、结构清洗、缓存和移动端
 node tests/term-highlighting.mjs  # 验证术语高亮与上下文实体边界
 node tests/server-embed.mjs       # 验证 Electron 可嵌入服务与独立数据目录
 node tests/desktop-smoke.mjs      # 验证桌面壳、关闭到托盘与后台服务保活
@@ -141,8 +154,6 @@ node tests/reset.mjs              # 验证一次性清空旧数据
 > 说明：内置正文来自用户本机提供的 The Economist PDF，仅保留用于个人学习的节选；英文正文未做目标词替换，翻译、词汇和解析为 FinLens 学习标注。
 > 联网抓取受目标站点反爬与付费墙限制。公众号无可公开搜索的 RSS，建议使用 RSSHub / wewe-rss 自建桥接，或直接粘贴正文。
 
-Git 项目来源、许可证和运行时拉取边界见 [GIT_SOURCES.md](GIT_SOURCES.md)。
-
 ---
 
 ## 目录结构
@@ -152,6 +163,8 @@ finlens/
 ├─ index.html            单一页面，四个视图
 ├─ src/styles.css        设计系统（浅色、金融阅读器风格、打印样式）
 ├─ src/app.js            状态管理 / 阅读器 / SRS / 检索 / 导出 / 导入
+├─ src/learning-events.js 学习事件账本、每日汇总、计划与热力图
+├─ src/task-center.js     持久任务状态、失败与恢复
 ├─ data/articles.js      语料库（文章·词汇·知识卡·主题）
 ├─ server/server.mjs     本地服务：抓取、文档解析、模型与 CC Switch、词典、TTS、总结和追问
 ├─ scripts/build-ecdict.mjs  ECDICT CSV → SQLite 构建工具
