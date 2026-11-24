@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Local secrets and runtime configuration
+.env
+.env.*
+*.pem
+*.key
+
+# Generated data and runtime state
+data/cache/
+data/tmp/
+data/backups/
+data/credentials/
+data/dictionary/*.sqlite
+data/dictionary/*.sqlite-*
+data/dictionary/*.csv
+
+# Test and application logs
+*.log
+
+# Generated screenshots and exported artifacts
+tests/shots/
+release/
+release-*/
+tests/*.out.log
+tests/*.err.log
+
+# Accidental shell-output files
+console.log*
+p.analysis*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+*.tmp

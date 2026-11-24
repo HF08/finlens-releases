@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinLens · 财经外刊学习工作台</title>
+<link rel="icon" type="image/png" href="src/assets/finlens-icon.png">
+<link rel="stylesheet" href="src/styles.css?v=20261124-public-v49">
+</head>
+<body>
+
+<svg class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-book-open" viewBox="0 0 24 24">
+    <path d="M12 7v14"/>
+    <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
+  </symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24">
+    <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/>
+    <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>
+    <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>
+  </symbol>
+  <symbol id="i-library" viewBox="0 0 24 24">
+    <path d="m16 6 4 14"/>
+    <path d="M12 6v14"/>
+    <path d="M8 8v12"/>
+    <path d="M4 4v16"/>
+  </symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24">
+    <rect width="20" height="5" x="2" y="3" rx="1"/>
+    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+    <path d="M10 12h4"/>
+  </symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24">
+    <rect width="16" height="16" x="4" y="4" rx="2"/>
+    <rect width="6" height="6" x="9" y="9" rx="1"/>
+    <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>
+  </symbol>
+  <symbol id="i-circle-help" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/>
+    <path d="M12 17h.01"/>
+  </symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24">
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>
+    <path d="M1 14h6M9 8h6M17 16h6"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24">
+    <circle cx="11" cy="11" r="8"/>
+    <path d="m21 21-4.3-4.3"/>
+  </symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24">
+    <path d="m18 14 4 4-4 4"/>
+    <path d="m18 2 4 4-4 4"/>
+    <path d="M2 18h1.97a4 4 0 0 0 3.3-1.7l5.46-8.6a4 4 0 0 1 3.3-1.7H22"/>
+    <path d="M2 6h1.97a4 4 0 0 1 3.6 2.2"/>
+    <path d="M22 18h-6.04a4 4 0 0 1-3.3-1.8l-.36-.45"/>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24">
+    <path d="M12 5v14M5 12h14"/>
+  </symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24">
+    <path d="M5 12h14"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24">
+    <path d="m20 6-11 11-5-5"/>
+  </symbol>
+  <symbol id="i-panel-right" viewBox="0 0 24 24">
+    <rect width="18" height="18" x="3" y="3" rx="2"/>
+    <path d="M15 3v18M9 10l2 2-2 2"/>
+  </symbol>
+  <symbol id="i-volume-2" viewBox="0 0 24 24">
+    <path d="M11 5 6 9H2v6h4l5 4z"/>
+    <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+  </symbol>
+  <symbol id="i-highlighter" viewBox="0 0 24 24">
+    <path d="m9 11-6 6v3h9l3-3"/>
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4z"/>
+  </symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24">
+    <path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/>
+    <circle cx="7.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24">
+    <path d="m7 4 13 8-13 8z"/>
+  </symbol>
+  <symbol id="i-star" viewBox="0 0 24 24">
+    <path d="m12 2 3.1 6.3L22 9.3l-5 4.9 1.2 6.9L12 17.8 5.8 21l1.2-6.9-5-4.9 6.9-1z"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24">
+    <rect width="14" height="14" x="8" y="8" rx="2"/>
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+  </symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+    <path d="M3 3v5h5"/>
+  </symbol>
+  <symbol id="i-file-text" viewBox="0 0 24 24">
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/>
+    <path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 24 24">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <path d="m7 10 5 5 5-5M12 15V3"/>
+  </symbol>
+  <symbol id="i-save" viewBox="0 0 24 24">
+    <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8A2 2 0 0 1 21 8.8V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+    <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7"/>
+  </symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <path d="m17 8-5-5-5 5M12 3v12"/>
+  </symbol>
+  <symbol id="i-history" viewBox="0 0 24 24">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+    <path d="M3 3v5h5M12 7v5l4 2"/>
+  </symbol>
+  <symbol id="i-badge-check" viewBox="0 0 24 24">
+    <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76z"/>
+    <path d="m9 12 2 2 4-4"/>
+  </symbol>
+</svg>
+
+<div class="app">
+
+  <!-- ============ 左侧导航 ============ -->
+  <aside class="rail">
+    <div class="brand">
+      <img class="brand-mark" src="src/assets/finlens-mark.png" alt="FinLens 图标">
+      <div class="brand-text">
+        <strong>FinLens</strong>
+        <span>财经外刊阅读台</span>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-view="reader" aria-current="page">
+        <span class="ni-ico"><svg class="ui-icon"><use href="#i-book-open"></use></svg></span><span class="ni-label">阅读台</span><span class="ni-badge" id="navArticles">0</span>
+      </button>
+      <button class="nav-item" data-view="cards">
+        <span class="ni-ico"><svg class="ui-icon"><use href="#i-layers"></use></svg></span><span class="ni-label">词汇复习</span><span class="ni-badge" id="navDue">0</span>
+      </button>
+      <button class="nav-item" data-view="knowledge">
+        <span class="ni-ico"><svg class="ui-icon"><use href="#i-library"></use></svg></span><span class="ni-label">知识库</span><span class="ni-badge" id="navKnowledge">0</span>
+      </button>
+      <button class="nav-item" data-view="export">
+        <span class="ni-ico"><svg class="ui-icon"><use href="#i-archive"></use></svg></span><span class="ni-label">产出归档</span>
+      </button>
+    </nav>
+
+    <div class="rail-card goal-card">
+      <div class="goal-head">
+        <span>今日目标</span>
+        <button class="mini-btn" id="editGoal" title="修改目标">调整</button>
+      </div>
+      <div class="goal-row">
+        <div class="goal-meta"><span>精读</span><b><span id="goalRead">0</span>/<span id="goalReadTarget">1</span> 篇</b></div>
+        <div class="bar"><i id="barRead" style="width:0%"></i></div>
+      </div>
+      <div class="goal-row">
+        <div class="goal-meta"><span>复习</span><b><span id="goalWords">0</span>/<span id="goalWordsTarget">12</span> 词</b></div>
+        <div class="bar"><i id="barWords" class="teal" style="width:0%"></i></div>
+      </div>
+    </div>
+
+    <div class="rail-card engine-card" id="engineCard">
+      <div class="engine-head">
+        <span class="dot" id="engineDot"></span>
+        <span id="engineName">本地预标注</span>
+      </div>
+      <p id="engineDesc">内置语料可离线精读，联网后可导入与标注</p>
+      <button class="mini-btn wide" data-open-engine>模型与抓取</button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区域 ============ -->
+  <main class="main">
+    <header class="topbar">
+      <div class="tb-left">
+        <h1 id="viewTitle">阅读台</h1>
+        <p id="viewSub">按文章精读，随时查词、核对术语</p>
+      </div>
+      <div class="tb-right">
+        <div class="stat-chip" title="累计精读篇数"><b id="statArticles">0</b><span>篇</span></div>
+        <div class="stat-chip" title="生词本容量"><b id="statWords">0</b><span>词</span></div>
+        <div class="stat-chip" title="连续学习天数"><b id="statStreak">0</b><span>天</span></div>
+        <button class="icon-btn" data-open-engine title="模型与抓取" aria-label="模型与抓取"><svg class="ui-icon"><use href="#i-cpu"></use></svg></button>
+        <button class="icon-btn" id="btnHelp" title="快捷键" aria-label="快捷键"><svg class="ui-icon"><use href="#i-circle-help"></use></svg></button>
+        <button class="icon-btn" data-open-learning title="学习设置" aria-label="学习设置"><svg class="ui-icon"><use href="#i-sliders"></use></svg></button>
+      </div>
+    </header>
+
+    <!-- ---------- 视图 1：阅读台 ---------- -->
+    <section class="view is-active" id="view-reader">
+      <div class="reader-grid">
+
+        <!-- 文章列表 -->
+        <aside class="list-pane">
+          <div class="list-search">
+            <input class="search" id="articleSearch" placeholder="搜索标题、来源、主题">
+          </div>
+          <div class="filter-block">
+            <div class="seg" id="topicSeg"></div>
+          </div>
+          <div class="filter-row">
+            <select id="filterLevel" class="sel">
+              <option value="all">全部难度</option>
+              <option value="B2">B2 · 中高级</option>
+              <option value="C1">C1 · 高级</option>
+              <option value="C2">C2 · 精尖</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <div class="seg seg-sm read-filter-seg" id="readFilterSeg">
+              <button data-read="all" class="on">全部</button>
+              <button data-read="unread">未学习</button>
+              <button data-read="read">已学习</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <select id="articleSort" class="sel" aria-label="文章排序">
+              <option value="date-desc">日期 · 最新优先</option>
+              <option value="date-asc">日期 · 最早优先</option>
+              <option value="source-asc">来源 · A → Z</option>
+              <option value="source-desc">来源 · Z → A</option>
+            </select>
+          </div>
+          <div class="list-count">
+            <span id="listCount">0 篇</span>
+            <button class="mini-btn icon-only" id="btnShuffle" title="随机抽一篇" aria-label="随机抽一篇"><svg class="ui-icon"><use href="#i-shuffle"></use></svg></button>
+            <button class="mini-btn" id="btnManageArticles">管理</button>
+          </div>
+          <div class="list-tools">
+            <button class="btn tiny" id="btnImport" title="导入外刊文章"><svg class="ui-icon"><use href="#i-plus"></use></svg><span>导入文章</span></button>
+          </div>
+          <div class="article-manage-bar" id="articleManageBar" hidden>
+            <button class="mini-btn" id="btnSelectAllArticles">全选导入文章</button>
+            <button class="mini-btn danger" id="btnDeleteArticles" disabled>删除所选</button>
+            <button class="mini-btn" id="btnCancelManage">完成</button>
+            <span class="article-manage-status" id="articleManageStatus">已选 0 篇</span>
+          </div>
+          <div class="article-list" id="articleList"></div>
+        </aside>
+
+        <!-- 阅读器 -->
+        <section class="doc-pane">
+          <div class="doc-toolbar">
+            <div class="tb-group mobile-article">
+              <span class="tb-label">文章</span>
+              <select class="sel" id="mobileArticle" aria-label="选择文章"></select>
+            </div>
+            <div class="tb-group">
+              <span class="tb-label">模式</span>
+              <div class="seg seg-sm" id="modeSeg">
+              <button data-mode="original" class="on">原文</button>
+              <button data-mode="intensive">精读</button>
+              <button data-mode="immersion">沉浸</button>
+              </div>
+            </div>
+            <div class="tb-group">
+              <span class="tb-label">译文</span>
+              <div class="seg seg-sm" id="zhSeg">
+                <button data-zh="on">对照</button>
+                <button data-zh="hover">悬停</button>
+                <button data-zh="off" class="on">关闭</button>
+              </div>
+            </div>
+            <div class="tb-group tb-toggles">
+              <button class="tgl" id="tglVocab" title="标注生词"><svg class="ui-icon"><use href="#i-highlighter"></use></svg><span>词汇</span></button>
+              <button class="tgl" id="tglKnow" title="标注金融术语"><svg class="ui-icon"><use href="#i-tag"></use></svg><span>术语</span></button>
+              <button class="tgl" id="btnTts" title="朗读当前文章"><svg class="ui-icon"><use href="#i-volume-2"></use></svg><span>朗读</span></button>
+              <audio id="ttsAudio" controls preload="none" hidden></audio>
+            </div>
+            <div class="tb-group tb-right">
+              <button class="icon-btn sm tool-action" id="btnDone" title="完成阅读后标记为已学习" disabled><svg class="ui-icon"><use href="#i-check"></use></svg><span>标记已学习</span></button>
+              <button class="icon-btn sm tool-action" id="btnReviewArticle" title="开始复习当前文章" hidden><svg class="ui-icon"><use href="#i-rotate"></use></svg><span>继续复习</span></button>
+              <button class="icon-btn sm" id="btnSideToggle" title="显示或隐藏右侧栏" aria-label="显示或隐藏右侧栏"><svg class="ui-icon"><use href="#i-panel-right"></use></svg></button>
+              <button class="icon-btn sm" id="fontMinus" title="减小字号" aria-label="减小字号"><svg class="ui-icon"><use href="#i-minus"></use></svg></button>
+              <button class="icon-btn sm" id="fontPlus" title="增大字号" aria-label="增大字号"><svg class="ui-icon"><use href="#i-plus"></use></svg></button>
+            </div>
+          </div>
+
+          <div class="doc-scroll" id="docScroll">
+            <article class="doc" id="doc">
+              <div class="doc-empty">← 从左侧选择一篇文章开始</div>
+            </article>
+          </div>
+        </section>
+
+        <!-- 右栏 -->
+        <aside class="side-pane">
+          <div class="side-tabs" id="sideTabs">
+            <button class="on" data-tab="vocab">词汇 <i id="sideVocabN">0</i></button>
+            <button data-tab="know">知识 <i id="sideKnowN">0</i></button>
+            <button data-tab="analysis">解析 <i id="sideAnalysisN">0</i></button>
+            <button data-tab="notes">标注 <i id="sideNoteN">0</i></button>
+            <button data-tab="tutor">问答 <i id="sideTutorN">0</i></button>
+          </div>
+          <div class="side-body" id="sideBody"></div>
+        </aside>
+
+      </div>
+    </section>
+
+    <!-- ---------- 视图 2：词汇闪卡 ---------- -->
+    <section class="view" id="view-cards">
+      <div class="cards-wrap">
+        <div class="cards-head">
+          <div class="seg" id="deckSeg">
+            <button data-deck="new">待学习</button>
+            <button data-deck="due" class="on">待复习</button>
+            <button data-deck="all">全部词汇</button>
+          </div>
+          <div class="seg seg-sm" id="cardModeSeg">
+            <button data-cmode="flip" class="on">卡片</button>
+            <button data-cmode="flash">闪现</button>
+            <button data-cmode="quiz">测验</button>
+          </div>
+          <button class="mini-btn" id="btnReviewHistory" title="打开已复习回顾侧栏"><svg class="ui-icon"><use href="#i-history"></use></svg><span>复习记录</span></button>
+          <button class="mini-btn" id="btnVocabManage" title="按文章导入或清理词汇库"><svg class="ui-icon"><use href="#i-sliders"></use></svg><span>词汇库</span></button>
+          <button class="mini-btn" id="btnExportVocabCsv" title="导出当前词库为 Anki / Quizlet 可导入 CSV"><svg class="ui-icon"><use href="#i-download"></use></svg><span>导出 CSV</span></button>
+        </div>
+
+        <div class="deck-context" id="deckContext"></div>
+        <div class="cards-stage" id="cardsStage"></div>
+
+        <div class="cards-stats" id="cardsStats"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 视图 3：知识库 ---------- -->
+    <section class="view" id="view-knowledge">
+      <div class="kb-wrap">
+        <div class="kb-toolbar">
+          <input class="search" id="kbSearch" placeholder="搜索概念，如「期限溢价」「抵押品」…">
+          <div class="seg seg-sm" id="kbCategorySeg">
+            <button data-kcat="all" class="on">全部知识</button>
+            <button data-kcat="finance">金融术语</button>
+            <button data-kcat="background">背景层</button>
+            <button data-kcat="method">分析方法</button>
+          </div>
+          <button class="mini-btn" id="btnRevalidateKnowledgeCategories" type="button"><svg class="ui-icon"><use href="#i-badge-check"></use></svg><span>核验分类</span></button>
+          <div class="seg" id="kbTopicSeg"></div>
+        </div>
+        <div class="kb-grid" id="kbGrid"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 视图 3b：知识详解页面 ---------- -->
+    <section class="view" id="view-knowledge-detail">
+      <div class="knowledge-detail-page">
+        <div class="knowledge-detail-page-head">
+          <button class="mini-btn" id="btnKnowledgeBack">← 返回知识库</button>
+          <div>
+            <h2 id="knowledgeDetailTitle">知识详解</h2>
+            <p id="knowledgeDetailSub">概念、机制、权威来源与案例</p>
+          </div>
+        </div>
+        <div class="knowledge-detail-scroll" id="knowledgeDetailContent"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 知识分类重新核验 ---------- -->
+    <div class="modal" id="categoryRevalidationModal" hidden>
+      <div class="modal-mask" data-close></div>
+      <div class="modal-body category-revalidation-body">
+        <div class="modal-head">
+          <h3>领域分类重新核验</h3>
+          <button class="icon-btn" data-close>✕</button>
+        </div>
+        <div class="modal-scroll">
+          <section class="set-sec">
+            <h4>核验范围</h4>
+            <div class="seg seg-sm" id="revalidationScopeSeg">
+              <button type="button" data-revalidate-scope="filtered" class="on">当前筛选</button>
+              <button type="button" data-revalidate-scope="all">全部知识卡</button>
+            </div>
+            <label class="chk big revalidation-online">
+              <input type="checkbox" id="revalidationOnline" checked>
+              <span>对变化、低置信度或内容可疑的卡片联网补核验权威来源</span>
+            </label>
+            <p class="hint">先运行本地分类规则，再按术语类型选择 SEC、Federal Reserve、BIS、IMF、BLS、BEA、IFRS、FINRA、Nasdaq、AEA、NBER、Crossref 等来源。预览会分别列出主对象、独立交叉和明确否定证据；来源目录与检索页面只用于后续核查，不单独构成分类依据。</p>
+            <div class="revalidation-source-coverage" id="revalidationSourceCoverage"></div>
+          </section>
+          <section class="set-sec">
+            <div class="revalidation-run-row">
+              <div>
+                <h4>差异预览</h4>
+                <p class="hint" id="revalidationStatus">生成预览后才会写入分类。</p>
+              </div>
+              <button class="btn primary" id="btnRunCategoryRevalidation" type="button">生成核验预览</button>
+            </div>
+            <div class="revalidation-preview" id="revalidationPreview"></div>
+            <div class="inline-actions revalidation-actions">
+              <button class="mini-btn danger" id="btnUndoCategoryRevalidation" type="button" hidden>撤销上次应用</button>
+              <button class="mini-btn primary" id="btnApplyCategoryRevalidation" type="button" disabled>应用所选变更</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="contentFixModal" hidden>
+      <div class="modal-mask" data-close></div>
+      <div class="modal-body content-fix-body">
+        <div class="modal-head">
+          <h3 id="contentFixTitle">查看建议内容</h3>
+          <button class="icon-btn" data-close>✕</button>
+        </div>
+        <div class="modal-scroll">
+          <p class="hint" id="contentFixReason">核验发现正文或案例与术语可能不一致。只有确认后才会更新内容，分类核验本身不会自动改写。</p>
+          <div class="content-fix-grid">
+            <section>
+              <h4>当前内容</h4>
+              <div class="content-fix-card" id="contentFixOriginal"></div>
+            </section>
+            <section>
+              <h4>建议内容</h4>
+              <div class="content-fix-card suggested" id="contentFixSuggested"></div>
+            </section>
+          </div>
+          <div class="inline-actions content-fix-actions">
+            <button class="mini-btn" id="btnCancelContentFix" type="button">保留当前内容</button>
+            <button class="mini-btn primary" id="btnApplyContentFix" type="button">应用建议内容</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- 视图 4：产出与归档 ---------- -->
+    <section class="view" id="view-export">
+      <div class="export-page">
+        <header class="export-heading">
+          <div>
+            <h1><svg class="ui-icon title-icon"><use href="#i-file-text"></use></svg>精读讲义与学习档案</h1>
+            <p>把选中的文章整理成可复习的讲义，或保存学习记录。</p>
+          </div>
+          <div class="export-readiness" id="exportReadiness"></div>
+        </header>
+
+        <div class="export-workbench">
+          <section class="export-section export-materials">
+            <div class="export-section-head">
+              <div>
+                <h2>选择文章</h2>
+                <p>精读解析选段会自动带入对应文章。</p>
+              </div>
+              <div class="export-selection-actions">
+                <button class="mini-btn" id="btnSelectReadExport" type="button">全选已精读</button>
+                <button class="mini-btn" id="btnClearExportSelection" type="button">清空</button>
+              </div>
+            </div>
+            <div class="export-list" id="exportList"></div>
+          </section>
+
+          <section class="export-section export-settings">
+            <div class="export-section-head">
+              <div>
+                <h2>讲义内容</h2>
+                <p>文档会使用当前文章的词汇侧重与知识分类。</p>
+              </div>
+              <span class="export-focus-badge" id="exportFocusBadge"></span>
+            </div>
+            <div class="export-focus-control">
+              <label for="exportFocusSelect">词汇侧重</label>
+              <select class="sel" id="exportFocusSelect">
+                <option value="article">沿用每篇文章</option>
+                <option value="balanced">通用财经词汇</option>
+                <option value="ielts">IELTS 学术词汇</option>
+                <option value="toefl">TOEFL 学术词汇</option>
+                <option value="finance">金融术语优先</option>
+              </select>
+              <span>按词汇条目已有的 IELTS / TOEFL / FINANCE 标签筛选</span>
+            </div>
+            <div class="export-options">
+              <label class="chk big"><input type="checkbox" id="expZh" checked><span>逐段译文</span></label>
+              <label class="chk big"><input type="checkbox" id="expVocab" checked><span>本篇词汇</span></label>
+              <label class="chk big"><input type="checkbox" id="expKnow" checked><span>知识卡</span></label>
+              <label class="chk big"><input type="checkbox" id="expAnalysis" checked><span>精读解析选段</span></label>
+              <label class="chk big"><input type="checkbox" id="expNotes"><span>我的标注与笔记</span></label>
+            </div>
+            <h3 class="export-analysis-heading">精读解析选段</h3>
+            <div class="export-analysis-summary" id="exportAnalysisSummary"></div>
+            <div class="export-actions">
+              <button class="btn primary" id="btnExportPdf" type="button"><svg class="ui-icon"><use href="#i-download"></use></svg><span>下载 PDF 讲义</span></button>
+              <button class="btn" id="btnExportMd" type="button"><svg class="ui-icon"><use href="#i-file-text"></use></svg><span>下载 Markdown</span></button>
+              <button class="btn ghost" id="btnExportJson" type="button"><svg class="ui-icon"><use href="#i-save"></use></svg><span>保存学习日志</span></button>
+              <button class="btn ghost" id="btnImportData" type="button"><svg class="ui-icon"><use href="#i-upload"></use></svg><span>恢复学习数据</span></button>
+              <input type="file" id="backupFile" accept="application/json,.json" hidden>
+            </div>
+            <p class="hint" id="backupStatus">每次启动、学习完成和关闭页面前自动保存学习日志。</p>
+          </section>
+        </div>
+
+        <section class="export-archive">
+          <div class="export-section-head">
+            <div>
+              <h2>归档记录</h2>
+              <p>保存生成参数，可随时按当前内容重新生成。</p>
+            </div>
+            <button class="mini-btn" id="btnClearExportArchive" type="button">清空记录</button>
+          </div>
+          <div class="export-archive-list" id="exportArchiveList"></div>
+          <div class="archive-overview">
+            <div class="archive-stats" id="archiveStats"></div>
+            <div class="archive-secondary">
+              <section>
+                <h3>最近学习</h3>
+                <div class="archive-recent" id="archiveRecent"></div>
+              </section>
+              <section>
+                <h3>主题掌握度</h3>
+                <div class="topic-bars" id="topicBars"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<aside class="review-drawer" id="reviewDrawer" hidden>
+  <div class="review-drawer-head">
+    <h3>已复习回顾</h3>
+    <button class="icon-btn" id="btnCloseReview" title="关闭">✕</button>
+  </div>
+  <div class="review-drawer-body" id="reviewHistoryBody"></div>
+</aside>
+
+<!-- ============ 设置面板 ============ -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body">
+    <div class="modal-head">
+      <h3>学习计划与偏好</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+
+    <div class="modal-scroll">
+      <section class="set-sec">
+        <h4>学习目标</h4>
+        <div class="set-row">
+          <label>每日精读篇数</label>
+          <input type="number" id="setReadTarget" min="1" max="10" value="1">
+        </div>
+        <div class="set-row">
+          <label>每日复习词量</label>
+          <input type="number" id="setWordTarget" min="5" max="200" value="12">
+        </div>
+        <div class="set-row">
+          <label>词汇信息</label>
+          <div class="seg seg-sm" id="setVocabDetail">
+            <button data-detail="brief">简略</button>
+            <button data-detail="detail">详细</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <label>词汇与解析侧重</label>
+          <select class="sel" id="setVocabFocus">
+            <option value="balanced">通用财经词汇</option>
+            <option value="ielts">IELTS 学术词汇</option>
+            <option value="toefl">TOEFL 学术词汇</option>
+            <option value="finance">金融术语优先</option>
+          </select>
+        </div>
+        <p class="hint">切换侧重会同步更新当前文章的词汇标注与精读解析：IELTS / TOEFL 更强调句法、搭配、改写和推荐表达，金融侧重更强调术语机制、估值与风险推理。原文、译文、知识卡、用户标注和问答记录保持不变；内置文章与导入文章均适用。简略模式只显示音标、词性和中文释义；详细模式增加英文释义、词形转换与例句。</p>
+        <p class="hint" id="vocabFocusStatus"></p>
+      </section>
+
+      <section class="set-sec">
+        <h4>学习数据</h4>
+        <p class="hint">查看文章总结、知识卡问答，并按文章清理标注与问答记录。</p>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnOpenAIData">问答记录与文章数据</button>
+          <button class="mini-btn danger" id="btnReset">清空全部学习记录</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 问答记录与文章数据管理 ============ -->
+<div class="modal" id="aiDataModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body ai-data-body">
+    <div class="modal-head">
+      <h3>问答记录与文章数据</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="ai-data-toolbar">
+      <input class="search" id="aiDataSearch" placeholder="搜索文章、知识卡或问题…">
+      <div class="seg seg-sm" id="aiDataSourceSeg">
+        <button type="button" data-ai-source="all" class="on">全部记录</button>
+        <button type="button" data-ai-source="article">文章总结</button>
+        <button type="button" data-ai-source="knowledge">知识卡问答</button>
+      </div>
+    </div>
+    <div class="ai-data-context" id="aiDataContext" hidden></div>
+    <div class="modal-scroll">
+      <div class="ai-data-grid">
+        <section class="ai-history-pane">
+          <div class="ai-data-section-head">
+            <div>
+              <h4>聊天历史</h4>
+              <p>按文章总结与知识卡分组保存。</p>
+            </div>
+            <button class="mini-btn danger" id="btnClearAllAIHistory">清空全部 AI 历史</button>
+          </div>
+          <div class="ai-history-list" id="aiHistoryList"></div>
+        </section>
+        <aside class="article-data-pane">
+          <div class="ai-data-section-head">
+            <div>
+              <h4>文章阅读数据</h4>
+              <p>可清理标注、总结问答和知识卡问答，阅读进度保留。</p>
+            </div>
+          </div>
+          <div class="article-data-list" id="articleDataList"></div>
+          <div class="ai-data-section-head restored-head">
+            <div>
+              <h4>最近删除</h4>
+              <p>删除前自动建立恢复点。</p>
+            </div>
+          </div>
+          <div class="article-restore-list" id="articleRestoreList"></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 引擎与抓取 ============ -->
+<div class="modal" id="engineModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body" style="width:600px">
+    <div class="modal-head">
+      <h3>模型引擎与自动抓取</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <section class="set-sec">
+        <h4>模型连接</h4>
+        <p class="hint">支持 OpenAI 兼容接口。密钥只保存在本机浏览器，并由本机服务转发，不会写入备份文件。</p>
+        <div class="set-row"><label>接口地址</label><input type="text" id="setBaseUrl" placeholder="https://api.openai.com/v1"></div>
+        <div class="set-row"><label>API Key</label><input type="password" id="setApiKey" placeholder="sk-...（仅存本机浏览器）"></div>
+        <div class="set-row">
+          <label>模型</label>
+          <div class="model-row">
+            <input type="text" id="setModel" placeholder="模型名称">
+            <select class="sel" id="modelList" aria-label="已拉取模型"><option value="">先拉取模型</option></select>
+          </div>
+        </div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnFetchModels">拉取模型列表</button>
+          <button class="mini-btn" id="btnTestModel">真实连接测试</button>
+          <button class="mini-btn" id="btnPing">检查本地服务</button>
+          <span class="test-out" id="modelStatus">未测试</span>
+          <span class="test-out" id="pingOut"></span>
+        </div>
+      </section>
+
+      <section class="set-sec">
+        <h4>知识详解与来源核验</h4>
+        <label class="chk big">
+          <input type="checkbox" id="setResearchOnline" checked>
+          <span>生成知识详解时联网核验新闻与学术来源</span>
+        </label>
+        <p class="hint">检索 GDELT 新闻与 Crossref 学术元数据；官方来源目录另行标注。检索失败时仍可生成解释，但会明确显示“未完成联网核验”。</p>
+      </section>
+
+      <section class="set-sec">
+        <h4>从 CC Switch 导入</h4>
+        <p class="hint">只读取本机 CC Switch 中具备 OpenAI 兼容地址和密钥的配置，不修改 CC Switch 数据。</p>
+        <div class="set-row">
+          <label>配置来源</label>
+          <select class="sel" id="ccSwitchProviders"><option value="">点击读取本机配置</option></select>
+        </div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnLoadCcSwitch">读取 CC Switch</button>
+          <button class="mini-btn" id="btnImportCcSwitch">导入所选配置</button>
+          <span class="test-out" id="ccSwitchStatus">未读取</span>
+        </div>
+      </section>
+
+      <section class="set-sec">
+        <h4>词典来源</h4>
+        <p class="hint">ECDICT 提供完整离线释义；Merriam-Webster Learner’s 为可选在线权威校验，仅在主动查词时请求，结果不写入备份或本地持久缓存。Oxford / Collins 需要单独授权，当前不默认启用。</p>
+        <div class="set-row">
+          <label>韦氏 API Key</label>
+          <input type="password" id="setMwApiKey" placeholder="可选，仅存本机浏览器">
+        </div>
+        <p class="hint">免费 Key 受非商业使用、每日额度和参考作品数量限制。可在
+          <a href="https://dictionaryapi.com/products/api-learners-dictionary" target="_blank" rel="noopener">Merriam-Webster Developer Center</a>
+          申请。</p>
+      </section>
+
+      <section class="set-sec">
+        <h4>朗读引擎</h4>
+        <div class="set-row">
+          <label>模式</label>
+          <select class="sel" id="setTtsEngine">
+            <option value="edge">Edge 在线语音（无需密钥）</option>
+            <option value="browser">浏览器本地语音</option>
+            <option value="openai">OpenAI 兼容语音接口</option>
+          </select>
+        </div>
+        <div class="set-row">
+          <label>语音模型</label>
+          <input type="text" id="setTtsModel" placeholder="gpt-4o-mini-tts">
+        </div>
+        <div class="set-row">
+          <label>音色</label>
+          <input type="text" id="setTtsVoice" placeholder="en-US-AriaNeural / alloy">
+        </div>
+        <p class="hint">Edge 音色示例：en-US-AriaNeural、en-US-GuyNeural。OpenAI 兼容音色示例：alloy、nova。</p>
+      </section>
+
+      <section class="set-sec">
+        <h4>自动抓取</h4>
+        <p class="hint">使用公开 RSS / Atom，或填写自建的 RSSHub / wewe-rss 订阅桥接地址。微信公众号没有公开搜索 RSS，建议使用
+          <a href="https://github.com/DIYgod/RSSHub" target="_blank" rel="noopener">RSSHub</a>
+          或 <a href="https://github.com/cooderl/wewe-rss" target="_blank" rel="noopener">wewe-rss</a>。
+          时间窗最长一年。</p>
+        <div class="inline-actions feed-actions">
+          <button class="mini-btn" id="btnUseFeedPresets">配置列表 1 · 官方一手源</button>
+          <button class="mini-btn" id="btnUseMarketMediaFeeds">配置列表 2 · 市场与宏观</button>
+          <button class="mini-btn" id="btnClearFeeds">清空订阅源</button>
+        </div>
+        <div class="set-row set-row-top">
+          <label>订阅源</label>
+          <textarea id="setCrawlFeeds" rows="4" placeholder="每行一个 RSS / Atom 地址"></textarea>
+        </div>
+        <div class="set-row crawl-date-row">
+          <label>时间窗</label>
+          <div class="date-range">
+            <input type="date" id="setCrawlFrom">
+            <span>至</span>
+            <input type="date" id="setCrawlTo">
+          </div>
+        </div>
+        <div class="set-row">
+          <label>自动检查</label>
+          <label class="chk"><input type="checkbox" id="setAutoCrawl"><span>启用</span></label>
+          <select class="sel compact-sel" id="setCrawlIntervalMin">
+            <option value="30">每 30 分钟</option>
+            <option value="60">每 1 小时</option>
+            <option value="360">每 6 小时</option>
+            <option value="1440">每天</option>
+          </select>
+        </div>
+        <div class="set-row">
+          <label>GitHub 资源</label>
+          <div class="inline-actions">
+            <button class="mini-btn" id="btnImportAwesomeFeeds">加载 Economist 最新期号</button>
+          </div>
+        </div>
+        <div class="github-import-controls" id="githubAwesomeControls" hidden>
+          <div class="set-row">
+            <label>期号</label>
+            <select class="sel" id="awesomeIssueSelect"></select>
+          </div>
+          <div class="set-row">
+            <label>文章</label>
+            <select class="sel" id="awesomeChapterSelect"></select>
+          </div>
+          <button class="mini-btn" id="btnImportAwesomeChapter">导入所选文章并标注</button>
+        </div>
+        <p class="hint" id="githubResourceStatus">首次加载需联网并下载本期 EPUB，之后优先使用本地缓存；不会在后台修改订阅配置。</p>
+        <div class="set-row">
+          <label>每次导入</label>
+          <input type="number" id="setCrawlMaxItems" min="1" max="10" value="3">
+          <label class="chk"><input type="checkbox" id="setCrawlAnnotate" checked><span>自动标注</span></label>
+        </div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnCrawlNow">立即检查更新</button>
+          <span class="test-out" id="crawlStatus">尚未配置</span>
+          <button class="mini-btn" id="btnCrawlDetails" hidden>失败详情</button>
+        </div>
+        <div class="crawl-errors" id="crawlErrors" hidden></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- 导入外刊 -->
+<div class="modal" id="importModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body" style="width:560px">
+    <div class="modal-head">
+      <h3>导入外刊文章</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <p class="hint">可导入网页、微信公众号文章，或上传你有权使用的 TXT / Markdown / HTML / DOCX 文档。自动抓取失败时，可粘贴正文继续学习。</p>
+      <h4 class="import-subtitle">网页 / 微信公众号</h4>
+      <div class="set-row"><label>文章链接</label><input type="text" id="importUrl" placeholder="https://…"></div>
+      <div class="set-row"><label>来源标注</label><input type="text" id="importSource" placeholder="如 The Economist（可留空）"></div>
+      <div class="inline-actions" style="margin-top:10px">
+        <button class="btn primary" id="btnImportGo">抓取并标注</button>
+        <span class="test-out" id="importStatus">待开始</span>
+      </div>
+      <h4 class="import-subtitle">上传文档</h4>
+      <div class="set-row">
+        <label>本地文件</label>
+        <input type="file" id="importFile" accept=".txt,.md,.html,.htm,.docx,.pdf">
+      </div>
+      <div class="inline-actions">
+        <button class="btn" id="btnUploadGo">上传并解析</button>
+        <span class="test-out" id="uploadStatus">支持 TXT / Markdown / HTML / DOCX / PDF</span>
+      </div>
+      <h4 class="import-subtitle">直接粘贴正文</h4>
+      <textarea id="importText" class="import-textarea" rows="5" placeholder="如果公众号或付费页面无法直接抓取，可粘贴正文；每个自然段之间空一行。"></textarea>
+      <div class="inline-actions">
+        <button class="btn" id="btnImportText">导入粘贴正文</button>
+        <span class="test-out" id="textImportStatus">正文仅在本机处理</span>
+      </div>
+      <div class="import-failure" id="importFailure" hidden>
+        <div class="import-failure-head">
+          <b id="importFailureTitle">导入未完成</b>
+          <span id="importFailureStage"></span>
+        </div>
+        <p id="importFailureReason"></p>
+        <ul id="importFailureSolutions"></ul>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnRetryImport">重试导入</button>
+          <button class="mini-btn" id="btnTestImportModel">测试模型连接</button>
+          <button class="mini-btn" id="btnSaveImportRaw">仅保存原文</button>
+          <button class="mini-btn" id="btnCopyImportDiagnostics">复制诊断信息</button>
+        </div>
+      </div>
+      <div id="importPreview" class="import-pv-wrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 词汇库管理 -->
+<div class="modal" id="vocabManageModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body vocab-manage-body">
+    <div class="modal-head">
+      <h3>词汇库管理</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <section class="set-sec">
+        <h4>从文章导入词汇</h4>
+        <p class="hint">选择文章后，将该文全部标注词汇加入生词本；已经存在的词不会重复增加。</p>
+        <div class="vocab-check-list" id="vocabArticleList"></div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnAddVocabFromArticles">加入所选文章词汇</button>
+        </div>
+      </section>
+      <section class="set-sec">
+        <h4>调整词汇与解析侧重</h4>
+        <p class="hint">先生成差异预览，确认后才会修改文章词汇和词汇库；“所选文章”使用上方勾选项。</p>
+        <div class="set-row">
+          <label>侧重</label>
+          <select class="sel" id="vocabManageFocus">
+            <option value="balanced">通用均衡</option>
+            <option value="ielts">IELTS 学术阅读</option>
+            <option value="toefl">TOEFL 学术阅读</option>
+            <option value="finance">金融术语优先</option>
+          </select>
+        </div>
+        <div class="set-row">
+          <label>范围</label>
+          <div class="seg seg-sm" id="vocabFocusScopeSeg">
+            <button type="button" data-focus-scope="current" class="on">当前文章</button>
+            <button type="button" data-focus-scope="selected">所选文章</button>
+            <button type="button" data-focus-scope="all">全部文章</button>
+          </div>
+        </div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnPreviewVocabFocus">生成差异预览</button>
+        </div>
+        <div class="hint" id="vocabFocusManageStatus"></div>
+        <div class="vocab-focus-preview" id="vocabFocusPreview" hidden></div>
+      </section>
+      <section class="set-sec">
+        <h4>筛选</h4>
+        <p class="hint">同时用于词汇卡片和测验队列，不影响闪现。</p>
+        <div class="seg seg-sm" id="reviewFilterSeg">
+          <button type="button" data-review-filter="all" class="on">全部</button>
+          <button type="button" data-review-filter="current">本篇生词</button>
+          <button type="button" data-review-filter="wrong">易错词</button>
+        </div>
+      </section>
+      <section class="set-sec">
+        <h4>清理生词本</h4>
+        <div class="set-row">
+          <label>筛选</label>
+          <select class="sel" id="vocabReviewFilter">
+            <option value="all">全部词汇</option>
+            <option value="unreviewed">未复习</option>
+            <option value="reviewed">已复习</option>
+          </select>
+        </div>
+        <div class="vocab-check-list" id="vocabWordList"></div>
+        <div class="inline-actions">
+          <button class="mini-btn" id="btnClearSelectedVocab">清除所选词汇</button>
+          <button class="mini-btn danger" id="btnClearAllVocab">清空全部生词本</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- 释义浮层 -->
+<div class="popover" id="popover" hidden></div>
+<div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="所选文字操作" hidden>
+  <button id="btnLookupSelection" type="button" title="查询所选单词">查词</button>
+  <button id="btnMarkSelection" type="button" title="将所选文字加入我的标注">标注所选</button>
+</div>
+<!-- 轻提示 -->
+<div class="toast" id="toast" hidden></div>
+<div class="ai-progress-panel" id="aiProgressPanel" hidden>
+  <div class="ai-progress-head">
+    <b id="aiProgressLabel">AI 标注处理中</b>
+    <span id="aiProgressPercent">0%</span>
+  </div>
+  <div class="ai-progress-track"><i id="aiProgressBar"></i></div>
+  <ol class="ai-progress-steps" id="aiProgressSteps">
+    <li data-progress-step="clean">正文清洗与质量校验</li>
+    <li data-progress-step="connect">连接 AI 模型</li>
+    <li data-progress-step="analyze">分段翻译与质量分析</li>
+    <li data-progress-step="enrich">生成词汇、知识卡与权威依据</li>
+    <li data-progress-step="save">保存文章</li>
+  </ol>
+</div>
+
+<script src="data/articles.js"></script>
+<script src="data/verified-knowledge-corrections.js"></script>
+<script src="src/app.js?v=20261124-public-v49"></script>
+</body>
+</html>

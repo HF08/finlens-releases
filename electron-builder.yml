@@ -1,0 +1,43 @@
+appId: com.finlens.desktop
+productName: FinLens
+copyright: Copyright © 2026 FINLENS
+asar: true
+compression: normal
+directories:
+  output: release
+  buildResources: desktop/assets
+publish:
+  provider: github
+  owner: HF08
+  repo: finlens-releases
+  releaseType: release
+files:
+  - index.html
+  - src/**/*
+  - server/**/*
+  - data/articles.js
+  - data/dictionary/*.json
+  - data/dictionary/*.md
+  - data/dictionary/*.txt
+  - desktop/**/*
+  - package.json
+extraResources:
+  - from: data/dictionary/ecdict.sqlite
+    to: dictionary/ecdict.sqlite
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: desktop/assets/icon.ico
+  executableName: FinLens
+  artifactName: FinLens-${version}-${arch}-Setup.${ext}
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false

@@ -1,0 +1,43 @@
+{
+  "name": "finlens",
+  "version": "0.1.21",
+  "private": true,
+  "description": "FinLens 财经外刊精读、词汇复习与知识工作台",
+  "author": "FINLENS",
+  "main": "desktop/main.cjs",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server/server.mjs",
+    "test": "node tests/server-embed.mjs && node tests/brand-icon.mjs && node tests/desktop-data-migration.mjs && node tests/legacy-backup-restore.mjs && node tests/desktop-updater.mjs && node tests/public-vocab-focus.mjs && node tests/verify.mjs && node tests/feedback.mjs && node tests/feedback-v2.mjs && node tests/focus-analysis-and-forms.mjs && node tests/export-archive.mjs && node tests/term-highlighting.mjs && node tests/ai-data-management.mjs && node tests/classification-research.mjs && node tests/knowledge-card-verification.mjs && node tests/category-revalidation.mjs && node tests/build-ecdict.mjs && node tests/dictionary.mjs && node tests/article-management.mjs && node tests/reset.mjs",
+    "test:github": "node tests/github-import.mjs",
+    "test:live": "node tests/live-resources.mjs",
+    "test:dictionary": "node tests/build-ecdict.mjs && node tests/dictionary.mjs",
+    "test:articles": "node tests/article-management.mjs",
+    "test:feedback-v2": "node tests/feedback-v2.mjs",
+    "test:reset": "node tests/reset.mjs",
+    "dictionary:build": "node scripts/build-ecdict.mjs data/dictionary/ecdict.csv data/dictionary/ecdict.sqlite",
+    "icons:build": "node scripts/build-icons.mjs",
+    "desktop:dev": "electron .",
+    "desktop:check": "node scripts/check-desktop-resources.mjs",
+    "desktop:build": "npm run icons:build && npm run desktop:check && electron-builder --win nsis --x64 && node scripts/write-desktop-checksum.mjs",
+    "desktop:verify": "node tests/desktop-packaging.mjs",
+    "desktop:verify:artifact": "node scripts/verify-desktop-artifact.mjs",
+    "desktop:smoke": "node tests/desktop-smoke.mjs",
+    "desktop:smoke:packaged": "node tests/desktop-smoke.mjs --packaged"
+  },
+  "dependencies": {
+    "csv-parse": "^5.6.0",
+    "electron-updater": "^6.8.11",
+    "jsonrepair": "^3.15.0",
+    "jszip": "^3.10.2",
+    "node-edge-tts": "^1.2.12",
+    "pdf-parse": "^2.4.5"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  }
+}
