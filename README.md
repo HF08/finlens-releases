@@ -141,6 +141,8 @@ node tests/reset.mjs              # 验证一次性清空旧数据
 > 说明：内置正文来自用户本机提供的 The Economist PDF，仅保留用于个人学习的节选；英文正文未做目标词替换，翻译、词汇和解析为 FinLens 学习标注。
 > 联网抓取受目标站点反爬与付费墙限制。公众号无可公开搜索的 RSS，建议使用 RSSHub / wewe-rss 自建桥接，或直接粘贴正文。
 
+Git 项目来源、许可证和运行时拉取边界见 [GIT_SOURCES.md](GIT_SOURCES.md)。
+
 ---
 
 ## 目录结构
