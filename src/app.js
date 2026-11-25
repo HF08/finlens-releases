@@ -154,6 +154,7 @@ let taskCenterFilter = 'running';
 let planCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let planSelectedDate = '';
 let activeMindMapArticleId = '';
+let pendingArticleVocabId = '';
 let mindMapNodeContexts = new Map();
 let mindMapHoverTimer = null;
 
@@ -801,6 +802,7 @@ async function boot() {
   wireExport();
   wireSettings();
   wireImport();
+  wireArticleVocabImport();
   wireTaskCenter();
   wireMindMap();
   wireKeyboard();
@@ -881,9 +883,11 @@ function buildTopicSeg(sel, active, onPick) {
 
 /* ================= 视图 1：阅读台 ================= */
 function isRead(id) { return !!(S.read[id] && S.read[id].done); }
-function isStudied(id) {
+function articleLearningState(id) {
   const state = S.read[id];
-  return !!(state && (state.done || (state.progress || 0) > 0 || (state.reviewCount || 0) > 0));
+  if (state?.done) return 'read';
+  if (state && ((state.progress || 0) > 0 || (state.reviewCount || 0) > 0)) return 'learning';
+  return 'unread';
 }
 
 function openArticle(id) {
@@ -1057,7 +1061,7 @@ function renderDoc() {
   const foot = `
     <div class="doc-foot">
       <button class="btn" id="btnReadAloud">${icon('volume-2')}<span>全文朗读</span></button>
-      <button class="btn ghost" id="btnToCards">${icon('layers')}<span>用本篇生词复习</span></button>
+      <button class="btn ghost" id="btnToCards">${icon('layers')}<span>导入/复习本篇文章生词</span></button>
       <button class="btn ghost" id="btnMindMap">${icon('brain-circuit')}<span>思维导图</span></button>
     </div>`;
 
@@ -1071,13 +1075,7 @@ function renderDoc() {
   });
   $('#btnToCards').addEventListener('click', (e) => {
     e.stopPropagation();
-    S.settings.deck = 'all';
-    S.settings.vocabFilter = 'current';
-    S.settings.cmode = 'flip';
-    save();
-    syncToolbar();
-    resetCardRuntime();
-    switchView('cards');
+    openArticleVocabImport(a.id);
   });
   $('#btnMindMap').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1694,8 +1692,7 @@ function filteredArticles() {
   return ARTICLES.filter(a => {
     if (filter.topic !== 'all' && a.topic !== filter.topic) return false;
     if (filter.level !== 'all' && a.level !== filter.level) return false;
-    if (filter.read === 'unread' && isStudied(a.id)) return false;
-    if (filter.read === 'read' && !isStudied(a.id)) return false;
+    if (filter.read !== 'all' && articleLearningState(a.id) !== filter.read) return false;
     if (q && ![a.title, a.deck, a.source, a.level, a.suggestedTag, (TOPICS.find(t => t.id === a.topic) || {}).name]
       .join(' ').toLowerCase().includes(q)) return false;
     return true;
@@ -1735,10 +1732,13 @@ function renderList() {
   $('#articleSort').value = S.settings.articleSort || 'date-desc';
   $('#articleList').innerHTML = pool.map(a => {
     const read = S.read[a.id];
-    const started = read && (read.done || (read.progress || 0) > 0);
+    const learningState = articleLearningState(a.id);
+    const started = learningState !== 'unread';
     const lastSeen = read ? (read.lastActiveAt || read.ts) : 0;
-    const learningStatus = read?.done ? '学习已完成' : '学习未完成';
-    const learningStatusClass = read?.done ? 'is-done' : started ? 'is-progress' : 'is-pending';
+    const learningStatus = learningState === 'read'
+      ? '学习已完成'
+      : learningState === 'learning' ? '学习中' : '未开始';
+    const learningStatusClass = learningState === 'read' ? 'is-done' : started ? 'is-progress' : 'is-pending';
     const custom = isCustomArticle(a.id);
     const selected = articleSelection.has(a.id);
     return `
@@ -1759,7 +1759,7 @@ function renderList() {
       <div class="acard-title">${esc(a.title)}</div>
       <div class="acard-deck">${esc(a.deck)}</div>
       <div class="acard-meta"><span>${a.date}</span><span>${a.vocab.length} 词</span><span>${totalWords(a)} words</span></div>
-      <div class="acard-learning-status ${learningStatusClass}">${learningStatus}${!read?.done && started ? ` · ${Math.max(1, read.progress || 1)}%` : ''}</div>
+      <div class="acard-learning-status ${learningStatusClass}">${learningStatus}${learningState === 'learning' ? ` · ${Math.max(1, read.progress || 1)}%` : ''}</div>
       ${started ? `<div class="acard-review">上次学习 ${new Date(lastSeen || Date.now()).toLocaleDateString('zh-CN')} · 进度 ${read.done ? 100 : read.progress || 0}% · 已复习 ${read.reviewCount || 0} 次 · 点击继续复习</div>` : ''}
     </div>`;
   }).join('') || '<div class="empty-tip">没有符合条件的文章<br>试试放宽筛选</div>';
@@ -2963,23 +2963,96 @@ function isLearnedWordState(state) {
   ));
 }
 
+function ensureWordState(id) {
+  if (S.words[id]) return false;
+  const key = normalizeVocabularyWord(wordMeta(id).v?.w);
+  const existingId = activeWordIds().find(candidate => {
+    if (candidate === id) return false;
+    return normalizeVocabularyWord(wordMeta(candidate).v?.w) === key;
+  });
+  S.words[id] = existingId
+    ? { ...S.words[existingId], added: Date.now(), seen: Math.max(1, S.words[existingId].seen || 0) }
+    : {
+        box: 0, due: 0, right: 0, wrong: 0, seen: 1,
+        added: Date.now(), learnedAt: 0, reviewEligible: false
+      };
+  return true;
+}
 function ensureWord(id) {
-  if (!S.words[id]) {
-    const key = normalizeVocabularyWord(wordMeta(id).v?.w);
-    const existingId = activeWordIds().find(candidate => {
-      if (candidate === id) return false;
-      return normalizeVocabularyWord(wordMeta(candidate).v?.w) === key;
-    });
-    S.words[id] = existingId
-      ? { ...S.words[existingId], added: Date.now(), seen: Math.max(1, S.words[existingId].seen || 0) }
-      : {
-          box: 0, due: 0, right: 0, wrong: 0, seen: 1,
-          added: Date.now(), learnedAt: 0, reviewEligible: false
-        };
+  if (ensureWordState(id)) {
     resetCardRuntime();
     save();
   }
   renderStats();
+}
+
+function articleVocabularyIds(article) {
+  const seen = new Set();
+  return (article?.vocab || [])
+    .map(vocab => wordKey(article.id, vocab.w))
+    .filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return Boolean(wordMeta(id).v);
+    });
+}
+
+function openArticleVocabImport(articleId) {
+  const article = ARTICLES.find(item => item.id === articleId);
+  const ids = articleVocabularyIds(article);
+  if (!article || !ids.length) {
+    toast('这篇文章还没有可导入的生词');
+    return;
+  }
+  const existing = ids.filter(id => S.words[id]).length;
+  pendingArticleVocabId = article.id;
+  $('#articleVocabSubtitle').textContent = `《${article.title}》 · ${ids.length} 个词`;
+  $('#articleVocabSummary').innerHTML = `
+    <div><b>${ids.length}</b><span>本篇词汇</span></div>
+    <div><b>${ids.length - existing}</b><span>待导入</span></div>
+    <div><b>${existing}</b><span>已在词库</span></div>`;
+  const button = $('#btnConfirmArticleVocab');
+  button.textContent = existing === ids.length ? '开始复习' : '导入并开始复习';
+  $('#articleVocabModal').hidden = false;
+  button.focus();
+}
+
+function closeArticleVocabImport() {
+  pendingArticleVocabId = '';
+  $('#articleVocabModal').hidden = true;
+}
+
+function confirmArticleVocabImport() {
+  const article = ARTICLES.find(item => item.id === pendingArticleVocabId);
+  if (!article) {
+    closeArticleVocabImport();
+    return;
+  }
+  let added = 0;
+  for (const id of articleVocabularyIds(article)) {
+    if (ensureWordState(id)) added += 1;
+  }
+  if (added) {
+    resetCardRuntime();
+    save();
+    renderStats();
+  }
+  S.settings.deck = 'all';
+  S.settings.vocabFilter = 'current';
+  S.settings.cmode = 'flip';
+  save();
+  syncToolbar();
+  resetCardRuntime();
+  closeArticleVocabImport();
+  switchView('cards');
+  toast(added ? `已导入 ${added} 个生词，已打开本篇复习` : '已打开本篇复习，词汇和进度保持原样');
+}
+
+function wireArticleVocabImport() {
+  $('#articleVocabModal').addEventListener('click', event => {
+    if (event.target.closest('[data-close]')) closeArticleVocabImport();
+  });
+  $('#btnConfirmArticleVocab').addEventListener('click', confirmArticleVocabImport);
 }
 function rateWord(id, score) {
   if (!S.words[id]) ensureWord2(id);
@@ -7453,7 +7526,7 @@ function copyImportDiagnostics() {
 }
 
 function wireImport() {
-  $('#btnImport').addEventListener('click', () => {
+  const openImport = (trigger) => {
     $('#importStatus').textContent = '待开始';
     $('#importStatus').style.color = 'var(--ink-3)';
     $('#uploadStatus').textContent = '支持 TXT / Markdown / HTML / DOCX';
@@ -7463,8 +7536,11 @@ function wireImport() {
     $('#importModal').hidden = false;
     setTimeout(() => {
       const active = document.activeElement;
-      if (!active || active === document.body || active.id === 'btnImport') $('#importUrl').focus();
+      if (!active || active === document.body || active === trigger) $('#importUrl').focus();
     }, 60);
+  };
+  $$('[data-open-import]').forEach(button => {
+    button.addEventListener('click', () => openImport(button));
   });
   $('#importModal').addEventListener('click', (e) => {
     if (e.target.closest('[data-close]')) {
@@ -8755,6 +8831,7 @@ function wireKeyboard() {
       closeTaskCenter();
       $('#vocabExportModal').hidden = true;
       $('#mindMapModal').hidden = true;
+      closeArticleVocabImport();
       $('#importModal').hidden = true;
       clearImportFailure();
       stopFlash();

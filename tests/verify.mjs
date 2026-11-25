@@ -375,8 +375,9 @@ await regression(async (p) => {
   if (visible) await p.locator('#mobileArticle').selectOption({ index: 2 });
   const title = visible ? await p.locator('.doc-title').innerText() : '';
   ok('Mobile reader can switch articles', visible && title.length > 5, title);
-  await p.locator('button.icon-btn[data-open-engine]').click();
-  await p.locator('#engineModal .modal-scroll').evaluate(el => el.scrollTop = el.scrollHeight);
+  await p.locator('button.mobile-import-btn[data-open-import]').click();
+  await p.locator('#importModal').waitFor({ state: 'visible' });
+  await p.locator('#importModal .modal-scroll').evaluate(el => el.scrollTop = el.scrollHeight);
   const fromBox = await p.locator('#setCrawlFrom').boundingBox();
   const toBox = await p.locator('#setCrawlTo').boundingBox();
   ok('Mobile crawler dates remain readable', fromBox && toBox && fromBox.width >= 130 && toBox.width >= 130,
@@ -626,7 +627,8 @@ await isolated(async (p) => {
 });
 
 await isolated(async (p) => {
-  await p.locator('[data-open-engine]').first().click();
+  await p.locator('#btnImport').click();
+  await p.locator('#importModal').waitFor({ state: 'visible' });
   const fields = ['#setCrawlFeeds', '#setCrawlFrom', '#setCrawlTo', '#setAutoCrawl', '#setCrawlIntervalMin', '#btnCrawlNow'];
   const visible = await Promise.all(fields.map(sel => p.locator(sel).isVisible()));
   ok('Crawler controls expose feeds, dates, automation and manual refresh',

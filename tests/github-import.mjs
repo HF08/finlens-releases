@@ -189,8 +189,8 @@ try {
   });
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
-  await page.locator('[data-open-engine]').first().click();
-  await page.locator('#engineModal').waitFor({ state: 'visible' });
+  await page.locator('#btnImport').click();
+  await page.locator('#importModal').waitFor({ state: 'visible' });
   await page.locator('#btnImportAwesomeFeeds').click();
   await page.waitForFunction(
     expected => document.querySelectorAll('#awesomeChapterSelect option').length === expected,
@@ -224,7 +224,7 @@ try {
   const selectedChapter = await page.locator('#awesomeChapterSelect option:checked').innerText();
   const selectedTitle = selectedChapter.split(' \u00b7 ')[0];
   await page.locator('#btnImportAwesomeChapter').click();
-  await page.locator('#engineModal').waitFor({ state: 'hidden', timeout: 15000 });
+  await page.locator('#importModal').waitFor({ state: 'hidden', timeout: 15000 });
   await page.waitForFunction(
     title => document.querySelector('.doc-title')?.textContent.trim() === title,
     selectedTitle,

@@ -199,7 +199,8 @@
         <div class="stat-chip" title="累计精读篇数"><b id="statArticles">0</b><span>篇</span></div>
         <div class="stat-chip" title="生词本容量"><b id="statWords">0</b><span>词</span></div>
         <div class="stat-chip" title="连续学习天数"><b id="statStreak">0</b><span>天</span></div>
-        <button class="icon-btn" data-open-engine title="模型与抓取" aria-label="模型与抓取"><svg class="ui-icon"><use href="#i-cpu"></use></svg></button>
+        <button class="icon-btn mobile-import-btn" data-open-import title="导入文章" aria-label="导入文章"><svg class="ui-icon"><use href="#i-plus"></use></svg></button>
+        <button class="icon-btn" data-open-engine title="模型与词典" aria-label="模型与词典"><svg class="ui-icon"><use href="#i-cpu"></use></svg></button>
         <button class="icon-btn" id="btnHelp" title="快捷键" aria-label="快捷键"><svg class="ui-icon"><use href="#i-circle-help"></use></svg></button>
         <button class="icon-btn" data-open-learning title="学习设置" aria-label="学习设置"><svg class="ui-icon"><use href="#i-sliders"></use></svg></button>
       </div>
@@ -229,6 +230,7 @@
             <div class="seg seg-sm read-filter-seg" id="readFilterSeg">
               <button data-read="all" class="on">全部</button>
               <button data-read="unread">未学习</button>
+              <button data-read="learning">学习中</button>
               <button data-read="read">已学习</button>
             </div>
           </div>
@@ -246,7 +248,7 @@
             <button class="mini-btn" id="btnManageArticles">管理</button>
           </div>
           <div class="list-tools">
-            <button class="btn tiny" id="btnImport" title="导入外刊文章"><svg class="ui-icon"><use href="#i-plus"></use></svg><span>导入文章</span></button>
+            <button class="btn tiny" id="btnImport" data-open-import title="导入外刊文章"><svg class="ui-icon"><use href="#i-plus"></use></svg><span>导入文章</span></button>
           </div>
           <div class="article-manage-bar" id="articleManageBar" hidden>
             <button class="mini-btn" id="btnSelectAllArticles">全选导入文章</button>
@@ -696,12 +698,12 @@
   </div>
 </div>
 
-<!-- ============ 引擎与抓取 ============ -->
+<!-- ============ 模型与词典 ============ -->
 <div class="modal" id="engineModal" hidden>
   <div class="modal-mask" data-close></div>
   <div class="modal-body" style="width:600px">
     <div class="modal-head">
-      <h3>模型引擎与自动抓取</h3>
+      <h3>模型与词典设置</h3>
       <button class="icon-btn" data-close>✕</button>
     </div>
     <div class="modal-scroll">
@@ -724,15 +726,6 @@
           <span class="test-out" id="modelStatus">未测试</span>
           <span class="test-out" id="pingOut"></span>
         </div>
-      </section>
-
-      <section class="set-sec">
-        <h4>知识详解与来源核验</h4>
-        <label class="chk big">
-          <input type="checkbox" id="setResearchOnline" checked>
-          <span>生成知识详解时联网核验新闻与学术来源</span>
-        </label>
-        <p class="hint">检索 GDELT 新闻与 Crossref 学术元数据；官方来源目录另行标注。检索失败时仍可生成解释，但会明确显示“未完成联网核验”。</p>
       </section>
 
       <section class="set-sec">
@@ -782,7 +775,67 @@
         <p class="hint">Edge 音色示例：en-US-AriaNeural、en-US-GuyNeural。OpenAI 兼容音色示例：alloy、nova。</p>
       </section>
 
-      <section class="set-sec">
+    </div>
+  </div>
+</div>
+
+<!-- ============ 任务中心 ============ -->
+<div class="modal" id="taskCenterModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body task-center-body">
+    <div class="modal-head">
+      <h3>任务中心</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="task-center-toolbar">
+      <div class="seg seg-sm" id="taskCenterFilters">
+        <button type="button" data-task-filter="running" class="on">进行中</button>
+        <button type="button" data-task-filter="failed">失败</button>
+        <button type="button" data-task-filter="history">历史</button>
+        <button type="button" data-task-filter="all">全部</button>
+      </div>
+      <span id="taskCenterSummary"></span>
+    </div>
+    <div class="modal-scroll">
+      <div class="task-center-list" id="taskCenterList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 导入外刊 -->
+<div class="modal" id="importModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body" style="width:760px">
+    <div class="modal-head">
+      <h3>导入外刊文章</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <p class="hint">可导入网页、微信公众号文章，或上传你有权使用的 TXT / Markdown / HTML / DOCX 文档。自动抓取失败时，可粘贴正文继续学习。</p>
+      <h4 class="import-subtitle">网页 / 微信公众号</h4>
+      <div class="set-row"><label>文章链接</label><input type="text" id="importUrl" placeholder="https://…"></div>
+      <div class="set-row"><label>来源标注</label><input type="text" id="importSource" placeholder="如 The Economist（可留空）"></div>
+      <div class="inline-actions" style="margin-top:10px">
+        <button class="btn primary" id="btnImportGo">抓取并标注</button>
+        <span class="test-out" id="importStatus">待开始</span>
+      </div>
+      <h4 class="import-subtitle">上传文档</h4>
+      <div class="set-row">
+        <label>本地文件</label>
+        <input type="file" id="importFile" accept=".txt,.md,.html,.htm,.docx,.pdf">
+      </div>
+      <div class="inline-actions">
+        <button class="btn" id="btnUploadGo">上传并解析</button>
+        <span class="test-out" id="uploadStatus">支持 TXT / Markdown / HTML / DOCX / PDF</span>
+      </div>
+      <h4 class="import-subtitle">直接粘贴正文</h4>
+      <textarea id="importText" class="import-textarea" rows="5" placeholder="如果公众号或付费页面无法直接抓取，可粘贴正文；每个自然段之间空一行。"></textarea>
+      <div class="inline-actions">
+        <button class="btn" id="btnImportText">导入粘贴正文</button>
+        <span class="test-out" id="textImportStatus">正文仅在本机处理</span>
+      </div>
+
+      <section class="set-sec import-config-section">
         <h4>自动抓取</h4>
         <p class="hint">使用公开 RSS / Atom，或填写自建的 RSSHub / wewe-rss 订阅桥接地址。微信公众号没有公开搜索 RSS，建议使用
           <a href="https://github.com/DIYgod/RSSHub" target="_blank" rel="noopener">RSSHub</a>
@@ -842,65 +895,16 @@
           <button class="mini-btn" id="btnCrawlNow">立即检查更新</button>
         </div>
       </section>
-    </div>
-  </div>
-</div>
 
-<!-- ============ 任务中心 ============ -->
-<div class="modal" id="taskCenterModal" hidden>
-  <div class="modal-mask" data-close></div>
-  <div class="modal-body task-center-body">
-    <div class="modal-head">
-      <h3>任务中心</h3>
-      <button class="icon-btn" data-close>✕</button>
-    </div>
-    <div class="task-center-toolbar">
-      <div class="seg seg-sm" id="taskCenterFilters">
-        <button type="button" data-task-filter="running" class="on">进行中</button>
-        <button type="button" data-task-filter="failed">失败</button>
-        <button type="button" data-task-filter="history">历史</button>
-        <button type="button" data-task-filter="all">全部</button>
-      </div>
-      <span id="taskCenterSummary"></span>
-    </div>
-    <div class="modal-scroll">
-      <div class="task-center-list" id="taskCenterList"></div>
-    </div>
-  </div>
-</div>
+      <section class="set-sec import-config-section">
+        <h4>知识详解与来源核验</h4>
+        <label class="chk big">
+          <input type="checkbox" id="setResearchOnline" checked>
+          <span>生成知识详解时联网核验新闻与学术来源</span>
+        </label>
+        <p class="hint">检索 GDELT 新闻与 Crossref 学术元数据；官方来源目录另行标注。检索失败时仍可生成解释，但会明确显示“未完成联网核验”。</p>
+      </section>
 
-<!-- 导入外刊 -->
-<div class="modal" id="importModal" hidden>
-  <div class="modal-mask" data-close></div>
-  <div class="modal-body" style="width:560px">
-    <div class="modal-head">
-      <h3>导入外刊文章</h3>
-      <button class="icon-btn" data-close>✕</button>
-    </div>
-    <div class="modal-scroll">
-      <p class="hint">可导入网页、微信公众号文章，或上传你有权使用的 TXT / Markdown / HTML / DOCX 文档。自动抓取失败时，可粘贴正文继续学习。</p>
-      <h4 class="import-subtitle">网页 / 微信公众号</h4>
-      <div class="set-row"><label>文章链接</label><input type="text" id="importUrl" placeholder="https://…"></div>
-      <div class="set-row"><label>来源标注</label><input type="text" id="importSource" placeholder="如 The Economist（可留空）"></div>
-      <div class="inline-actions" style="margin-top:10px">
-        <button class="btn primary" id="btnImportGo">抓取并标注</button>
-        <span class="test-out" id="importStatus">待开始</span>
-      </div>
-      <h4 class="import-subtitle">上传文档</h4>
-      <div class="set-row">
-        <label>本地文件</label>
-        <input type="file" id="importFile" accept=".txt,.md,.html,.htm,.docx,.pdf">
-      </div>
-      <div class="inline-actions">
-        <button class="btn" id="btnUploadGo">上传并解析</button>
-        <span class="test-out" id="uploadStatus">支持 TXT / Markdown / HTML / DOCX / PDF</span>
-      </div>
-      <h4 class="import-subtitle">直接粘贴正文</h4>
-      <textarea id="importText" class="import-textarea" rows="5" placeholder="如果公众号或付费页面无法直接抓取，可粘贴正文；每个自然段之间空一行。"></textarea>
-      <div class="inline-actions">
-        <button class="btn" id="btnImportText">导入粘贴正文</button>
-        <span class="test-out" id="textImportStatus">正文仅在本机处理</span>
-      </div>
       <div class="import-failure" id="importFailure" hidden>
         <div class="import-failure-head">
           <b id="importFailureTitle">导入未完成</b>
@@ -1030,6 +1034,28 @@
         </div>
         <button class="mini-btn" id="btnExportDueVocabCsv" type="button">下载待复习 CSV</button>
       </section>
+    </div>
+  </div>
+</div>
+
+<!-- 本篇生词导入 -->
+<div class="modal" id="articleVocabModal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-body article-vocab-body">
+    <div class="modal-head">
+      <div>
+        <h3>导入本篇文章生词</h3>
+        <p class="article-vocab-subtitle" id="articleVocabSubtitle"></p>
+      </div>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="modal-scroll">
+      <div class="article-vocab-summary" id="articleVocabSummary"></div>
+      <p class="hint">导入后只复习这篇文章的词汇。已在生词本中的词会保留原复习进度，不会覆盖评分、到期时间或学习记录。</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" type="button" data-close>取消</button>
+      <button class="btn primary" id="btnConfirmArticleVocab" type="button">导入并开始复习</button>
     </div>
   </div>
 </div>

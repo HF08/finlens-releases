@@ -255,16 +255,23 @@ if (await page.locator('#settingsModal [data-close]').count()) await page.locato
 
 await engineButton.click();
 ok('Engine settings open in their own modal', await page.locator('#engineModal').isVisible());
+ok('Research and crawler settings are no longer inside the engine modal',
+  await page.locator('#engineModal #setResearchOnline').count() === 0 &&
+  await page.locator('#engineModal #setCrawlFeeds').count() === 0);
+await page.locator('#engineModal .modal-head [data-close]').click();
+await page.locator('#btnImport').click();
+await page.locator('#importModal').waitFor({ state: 'visible' });
 const defaultFeeds = await page.locator('#setCrawlFeeds').inputValue();
 ok('Financial RSS sources are configured by default',
   defaultFeeds.includes('federalreserve.gov') && defaultFeeds.includes('bis.org'), `${defaultFeeds.split('\n').length} feeds`);
-ok('Economist GitHub import and two fixed feed lists are available in the engine panel',
+ok('Economist GitHub import and two fixed feed lists are available in the import panel',
+  await page.locator('#setResearchOnline').isVisible() &&
   await page.locator('#btnImportAwesomeFeeds').count() === 1 &&
   await page.locator('#btnUseFeedPresets').count() === 1 &&
   await page.locator('#btnUseMarketMediaFeeds').count() === 1 &&
   await page.locator('#btnImportFinanceReaderFeeds').count() === 0);
 const presets = page.locator('#btnUseFeedPresets');
-ok('Engine settings provide tested financial RSS presets', await presets.count() === 1);
+ok('Import settings provide tested financial RSS presets', await presets.count() === 1);
 if (await presets.count()) {
   await presets.click();
   const feeds = await page.locator('#setCrawlFeeds').inputValue();
@@ -287,6 +294,7 @@ if (await marketMediaPreset.count()) {
   ok('Configuration list 2 excludes unreliable and stale sources',
     !feeds.some(feed => /seekingalpha|yahoo|nytimes|marketpulse|feeds\.a\.dj\.com|marketwatch|nasdaq\.com\/feed|bis\.org/i.test(feed)));
 }
+await page.locator('#importModal .modal-head [data-close]').click();
 
 await page.evaluate(({ baseUrl }) => {
   const state = JSON.parse(localStorage.getItem('finlens.v1') || '{}');
@@ -320,7 +328,8 @@ await page.fill('#setApiKey', 'feedback-test-key');
 await page.locator('#setApiKey').press('Tab');
 await page.waitForFunction(() => {
   const settings = JSON.parse(localStorage.getItem('finlens.v1') || '{}').settings || {};
-  return Boolean(settings.localCredentialId);
+  return Boolean(settings.localCredentialId) &&
+    document.querySelector('#setApiKey')?.value === '';
 }, null, { timeout: 5000 });
 const manualCredentialState = await page.evaluate(() => {
   const settings = JSON.parse(localStorage.getItem('finlens.v1') || '{}').settings || {};

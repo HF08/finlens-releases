@@ -485,7 +485,8 @@ try {
     localStorage.setItem('finlens.v1', JSON.stringify(state));
   });
   await crawlPage.reload({ waitUntil: 'networkidle' });
-  await crawlPage.locator('[data-open-engine]').first().click();
+  await crawlPage.locator('#btnImport').click();
+  await crawlPage.locator('#importModal').waitFor({ state: 'visible' });
   await crawlPage.locator('#btnCrawlNow').click();
   await crawlPage.waitForFunction(
     () => taskCenterSummary().latest?.type === 'crawl' &&
@@ -504,7 +505,7 @@ try {
     /3 项失败/.test(crawlTask.message || '') &&
     crawlTask.recovery?.length >= 3,
     JSON.stringify(crawlTask));
-  await crawlPage.locator('#engineModal .modal-head [data-close]').click();
+  await crawlPage.locator('#importModal .modal-head [data-close]').click();
   await crawlPage.locator('#engineCard').click();
   await crawlPage.locator('#taskCenterModal [data-task-filter="failed"]').click();
   const detailText = await crawlPage.locator('#taskCenterModal').innerText();

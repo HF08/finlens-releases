@@ -2551,10 +2551,82 @@ try {
     done: document.querySelector('.acard[data-a="fb-b"] .acard-learning-status')?.textContent || '',
     pending: document.querySelector('.acard[data-a="fb-a"] .acard-learning-status')?.textContent || ''
   }));
-  check('Article cards show explicit completed and incomplete learning states',
+  check('Article cards distinguish completed and not-started articles',
     articleLearningStatus.done.includes('学习已完成') &&
-    articleLearningStatus.pending.includes('学习未完成'),
+    articleLearningStatus.pending.includes('未开始'),
     JSON.stringify(articleLearningStatus));
+  await page.evaluate(() => {
+    S.read['fb-c'] = { progress: 35, lastActiveAt: Date.now() };
+    save();
+    renderList();
+  });
+  const threeStateLabels = await page.evaluate(() => ({
+    done: document.querySelector('.acard[data-a="fb-b"] .acard-learning-status')?.textContent || '',
+    learning: document.querySelector('.acard[data-a="fb-c"] .acard-learning-status')?.textContent || '',
+    unread: document.querySelector('.acard[data-a="fb-a"] .acard-learning-status')?.textContent || ''
+  }));
+  check('Article cards expose done, learning, and unread states',
+    threeStateLabels.done.includes('学习已完成') &&
+    threeStateLabels.learning.includes('学习中') &&
+    threeStateLabels.unread.includes('未开始'),
+    JSON.stringify(threeStateLabels));
+  const articleFilterIds = async (value) => {
+    await page.locator(`#readFilterSeg button[data-read="${value}"]`).click();
+    const ids = await page.locator('#articleList .acard').evaluateAll(cards => cards.map(card => card.dataset.a));
+    await page.locator('#readFilterSeg button[data-read="all"]').click();
+    return ids;
+  };
+  const unreadArticleIds = await articleFilterIds('unread');
+  const learningArticleIds = await articleFilterIds('learning');
+  const doneArticleIds = await articleFilterIds('read');
+  check('Article learning filters keep unread, in-progress, and completed articles separate',
+    unreadArticleIds.includes('fb-a') &&
+    !unreadArticleIds.includes('fb-b') &&
+    !unreadArticleIds.includes('fb-c') &&
+    learningArticleIds.includes('fb-c') &&
+    !learningArticleIds.includes('fb-b') &&
+    doneArticleIds.includes('fb-b') &&
+    !doneArticleIds.includes('fb-c'),
+    JSON.stringify({ unreadArticleIds, learningArticleIds, doneArticleIds }));
+
+  await page.locator('.acard[data-a="fb-b"]').click();
+  check('Reader offers one article vocabulary import and review action',
+    (await page.locator('#btnToCards').innerText()).includes('导入/复习本篇文章生词'));
+  await page.locator('#btnToCards').click();
+  await page.locator('#articleVocabModal').waitFor({ state: 'visible' });
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: path.join(OUT, 'feedback-v2-article-vocab-import.png') });
+  const vocabImportPrompt = await page.locator('#articleVocabModal').innerText();
+  check('Article vocabulary review explains the import before changing the library',
+    vocabImportPrompt.includes('本篇文章生词') &&
+    vocabImportPrompt.includes('1 个词') &&
+    vocabImportPrompt.includes('不会覆盖'),
+    vocabImportPrompt.replace(/\s+/g, ' ').slice(0, 180));
+  await page.locator('#btnConfirmArticleVocab').click();
+  await page.locator('#articleVocabModal').waitFor({ state: 'hidden' });
+  const vocabImportState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('finlens.v1') || '{}');
+    return {
+      imported: !!state.words?.['fb-b:liquidity'],
+      deck: state.settings?.deck,
+      filter: state.settings?.vocabFilter,
+      mode: state.settings?.cmode
+    };
+  });
+  check('Article vocabulary review imports all article words and opens the current-article deck',
+    vocabImportState.imported &&
+    vocabImportState.deck === 'all' &&
+    vocabImportState.filter === 'current' &&
+    vocabImportState.mode === 'flip',
+    JSON.stringify(vocabImportState));
+  await page.evaluate(() => {
+    S.settings.deck = 'due';
+    S.settings.vocabFilter = 'all';
+    save();
+    syncToolbar();
+    renderCards();
+  });
+  await page.locator('.nav-item[data-view="reader"]').click();
 
   await page.locator('.nav-item[data-view="cards"]').click();
   const vocabManage = page.locator('#btnVocabManage');

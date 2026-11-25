@@ -115,8 +115,8 @@ try {
   });
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
-  await page.locator('[data-open-engine]').first().click();
-  await page.locator('#engineModal').waitFor({ state: 'visible' });
+  await page.locator('#btnImport').click();
+  await page.locator('#importModal').waitFor({ state: 'visible' });
 
   await page.locator('#btnImportAwesomeFeeds').click();
   await page.waitForFunction(() => {
