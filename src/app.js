@@ -9,6 +9,7 @@ const LEGACY_RECOVERY_MARKER_KEY = 'finlens.legacyRecoveryVersion';
 const LEGACY_RECOVERY_VERSION = '2026-11-12-backup-v1';
 const DATA_RESET_VERSION = '2026-11-03-feedback-reset-v1';
 const DAY_MS = 86400000;
+const MAX_CUSTOM_ARTICLES = 100;
 const LearningEvents = window.FinLensLearningEvents;
 const TaskDomain = window.FinLensTaskCenter;
 const KNOWLEDGE_CATEGORIES = {
@@ -8444,7 +8445,13 @@ function persistCustom(art) {
   clearVocabularyOverride(art.id);
   S.custom = S.custom || [];
   S.custom.unshift(art);
-  S.custom = S.custom.slice(0, 30);
+  if (S.custom.length > MAX_CUSTOM_ARTICLES) {
+    const removedIds = new Set(S.custom.slice(MAX_CUSTOM_ARTICLES).map(article => article.id));
+    S.custom = S.custom.slice(0, MAX_CUSTOM_ARTICLES);
+    for (let index = ARTICLES.length - 1; index >= 0; index -= 1) {
+      if (removedIds.has(ARTICLES[index].id)) ARTICLES.splice(index, 1);
+    }
+  }
   if (!ARTICLES.some(x => x.id === art.id)) ARTICLES.push(art);
   save();
   renderStats();

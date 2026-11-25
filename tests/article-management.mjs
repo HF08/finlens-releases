@@ -515,6 +515,44 @@ try {
     detailText.includes('Crawl candidate 2'),
     detailText.slice(0, 180));
   await crawlPage.screenshot({ path: path.join(OUT, 'crawl-failure-details.png') });
+  const importCapacity = await crawlPage.evaluate(() => {
+    for (let index = 0; index < 35; index += 1) {
+      persistCustom({
+        id: `capacity-${index}`,
+        title: `Capacity article ${index}`,
+        deck: 'Capacity regression fixture',
+        source: 'FinLens Test',
+        date: '2026-11-25',
+        topic: 'markets',
+        level: 'C1',
+        paragraphs: [],
+        vocab: [],
+        knowledge: [],
+        _url: `https://example.test/capacity-${index}`
+      });
+    }
+    return {
+      custom: S.custom.length,
+      articles: ARTICLES.length,
+      badge: document.querySelector('#navArticles')?.textContent
+    };
+  });
+  check('Imported article library does not silently cap at 30',
+    importCapacity.custom === 37 &&
+    importCapacity.articles === 42 &&
+    importCapacity.badge === '42',
+    JSON.stringify(importCapacity));
+  await crawlPage.reload({ waitUntil: 'networkidle' });
+  const persistedCapacity = await crawlPage.evaluate(() => ({
+    custom: S.custom.length,
+    articles: ARTICLES.length,
+    badge: document.querySelector('#navArticles')?.textContent
+  }));
+  check('Imported article total survives reload without dropping records',
+    persistedCapacity.custom === 37 &&
+    persistedCapacity.articles === 42 &&
+    persistedCapacity.badge === '42',
+    JSON.stringify(persistedCapacity));
   await crawlContext.close();
 } finally {
   if (browser) await browser.close();
