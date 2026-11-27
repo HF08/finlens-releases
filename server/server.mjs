@@ -252,19 +252,72 @@ function stripPageNoiseContainers(html) {
   return clean.replace(containerPattern, ' ');
 }
 
+function normalizeTitleCandidate(value) {
+  return decodeEntities(String(value || '').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isStrictEnglishTitle(value) {
+  const title = normalizeTitleCandidate(value);
+  const words = title.match(/[A-Za-z][A-Za-z0-9'’-]*/g) || [];
+  const cjk = title.match(/[\u3400-\u9fff]/g) || [];
+  if (!title || cjk.length || title.length < 12 || title.length > 160) return false;
+  if (words.length < 3 || words.length > 24) return false;
+  if (/[.。]/.test(title)) return false;
+  if (/subscribe|follow us|click here|read more|advertisement|sponsored|image source|微信公众平台/i.test(title)) return false;
+  if (STRONG_BOILERPLATE_SENTENCE.some(pattern => pattern.test(title))) return false;
+  return true;
+}
+
+function extractWechatEnglishTitle(html, pageTitle = '') {
+  const source = String(html || '');
+  const candidates = [pageTitle];
+  for (const match of source.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = (tag.match(/\b(?:property|name|itemprop)=["']([^"']+)["']/i) || [, ''])[1];
+    if (!/^(?:og:title|twitter:title|title|headline)$/i.test(key)) continue;
+    candidates.push((tag.match(/\bcontent=["']([^"']*)["']/i) || [, ''])[1]);
+  }
+  for (const match of source.matchAll(/<(?:h1|h2|h3)\b[^>]*>([\s\S]*?)<\/(?:h1|h2|h3)>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const match of source.matchAll(/<(?:div|section|p|span)\b[^>]*(?:id|class)=["'][^"']*(?:rich_media_title|activity-name|article-title|post-title)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section|p|span)>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const match of source.slice(0, 12000).matchAll(/<(?:p|section)\b[^>]*>\s*<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>\s*<\/(?:p|section)>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const candidate of candidates) {
+    const title = normalizeTitleCandidate(candidate)
+      .replace(/\s*[-_|]\s*微信公众平台\s*$/i, '')
+      .replace(/^微信公众平台\s*[-_|]\s*/i, '')
+      .trim();
+    if (isStrictEnglishTitle(title)) return title;
+  }
+  return '';
+}
+
 function extractParagraphs(html) {
-  let h = stripPageNoiseContainers(html
+  const sourceHtml = String(html || '');
+  let h = stripPageNoiseContainers(sourceHtml
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' '));
 
-  const title = decodeEntities((h.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [, ''])[1])
+  let title = decodeEntities((h.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [, ''])[1])
     .replace(/\s+/g, ' ')
     .trim();
 
   const wechat = h.match(/id=["']js_content["'][^>]*>([\s\S]*)/i);
+  let englishTitle = '';
   if (wechat) {
+    title = title
+      .replace(/\s*[-_|]\s*微信公众平台\s*$/i, '')
+      .replace(/^微信公众平台\s*[-_|]\s*/i, '')
+      .trim();
+    englishTitle = extractWechatEnglishTitle(sourceHtml, title);
     h = wechat[1]
       .split(/<div[^>]+class=["'][^"']*(?:rich_media_tool|qr_code|js_ad)[^"']*["']/i)[0]
       .replace(/<\/div>\s*<\/div>[\s\S]*$/i, '');
@@ -312,7 +365,7 @@ function extractParagraphs(html) {
     out.push(p);
     if (out.length >= 18) break;
   }
-  return { title, paragraphs: out };
+  return { title, englishTitle, paragraphs: out };
 }
 
 function validateArticleContent(paragraphs, title = '') {
@@ -618,7 +671,7 @@ const KNOWLEDGE_CASE_RULES = `案例字段（cases）规则：
 5. 数字必须带单位、期间和口径，区分百分比与百分点、水平与增速、存量与流量、名义与实际；涉及会计、法律或监管时说明准则、法域或生效时间。
 6. 案例不参与 category 判断。即使案例跨到金融、法律或技术领域，术语主分类仍由 term、one 和 body 的主解释对象决定。`;
 
-function buildPrompt({ title, paragraphs, vocabFocus }) {
+function buildPrompt({ title, paragraphs, vocabFocus, sourceKind, sourceTitle, originalEnglishTitle }) {
   const focus = {
     balanced: '通用财经英语，兼顾表达与金融概念',
     ielts: 'IELTS 学术阅读高频词汇，优先可用于写作与口语的学术表达',
@@ -626,10 +679,16 @@ function buildPrompt({ title, paragraphs, vocabFocus }) {
     finance: '金融术语优先，重点是机制、指标和市场语境的准确理解'
   }[vocabFocus] || '通用财经英语，兼顾表达与金融概念';
   const analysisFocus = FOCUS_ANALYSIS_GUIDE[vocabFocus] || FOCUS_ANALYSIS_GUIDE.balanced;
+  const titleRule = sourceKind === 'wechat'
+    ? (originalEnglishTitle
+        ? `0.1 这是微信公众号文章。JSON 的 title 必须原样使用已识别的英文原标题：“${originalEnglishTitle}”；不得翻译或改写。deck 仍写一句简体中文导语。`
+        : '0.1 这是微信公众号文章，且正文中没有可靠的英文原标题。JSON 的 title 必须根据全文生成一个简洁、具体的英文摘要标题（3-18 个英文单词）；不得使用中文标题或栏目名。deck 仍写一句简体中文导语。')
+    : '';
   return `你是财经英语教学专家。请把下面的英文财经报道改写为结构化精读语料，输出**严格 JSON**（不要 markdown 代码块）。
 
 要求：
 0. 先判断输入是否为连贯的完整文章。若是链接导航、碎片提示、前后不连贯文本或明显非文章内容，quality 设为 false，并在 qualityReason 说明原因。quality 只是诊断标记，无论取值如何，都必须继续返回 paragraphs、vocab 和 knowledge，不能因为 quality=false 而省略学习字段。官方声明、政策稿、报告节选只要语义连贯、段落完整，应视为可精读文章。
+${titleRule}
 1. 保留原文段落，按语义切分为 3-6 段；每段不超过 90 词。金融术语用 {{术语}} 包裹（仅标注真正的专业概念，如 term premium、yield curve）。
 2. 为每段提供准确、通顺的简体中文翻译。
 3. 为每段提供 analysis：english 包含 longSentence（长难句拆解）、grammar（语法与逻辑关系）、expression（可迁移表达）；finance 包含 term（核心金融概念）、background（背景与机制）、relevance（与本文论点或市场的联系）；focus 包含 label、guidance、recommendations（0-3 条英文推荐表达）。解析侧重为“${analysisFocus.label}”：${analysisFocus.instruction}。中文≤140 字/项。
@@ -665,13 +724,19 @@ JSON 结构：
  "knowledge":[{"term":"","en":"","category":"finance|background|method","categories":["finance","background"],"categoryReason":"","categoryConfidence":0.95,"cardType":"concept|phenomenon|mechanism|method","classificationReason":"","one":"","body":"","cases":"","scenarios":[""],"indicators":[{"name":"","meaning":"","importance":""}],"methodSteps":[],"related":[""],"match":[""]}]}
 
 原文标题：${title || '(unknown)'}
+${sourceTitle && sourceTitle !== title ? `原文页面标题：${sourceTitle}` : ''}
 原文段落：
 ${paragraphs.map((p, i) => `[${i + 1}] ${p}`).join('\n')}`;
 }
 
-function buildCompactPrompt(title, paragraph, vocabFocus = 'balanced') {
+function buildCompactPrompt(title, paragraph, vocabFocus = 'balanced', options = {}) {
   const focus = VOCAB_FOCUS_GUIDE[vocabFocus] || VOCAB_FOCUS_GUIDE.balanced;
   const analysisFocus = FOCUS_ANALYSIS_GUIDE[vocabFocus] || FOCUS_ANALYSIS_GUIDE.balanced;
+  const titleRule = options.sourceKind === 'wechat'
+    ? (options.originalEnglishTitle
+        ? `JSON title 必须原样使用英文原标题“${options.originalEnglishTitle}”；deck 使用一句简体中文导语。`
+        : 'JSON title 必须根据段落生成简洁具体的英文摘要标题（3-18 个英文单词），不得使用中文；deck 使用一句简体中文导语。')
+    : '';
   return `只分析下面一个英文财经段落。即使输入看起来像网页提示而不是新闻，也按实际英文内容教学。
 输出严格 JSON，不要 Markdown，不要代码块，字符串内不要使用未转义的双引号：
 {"quality":true,"qualityReason":"","title":"${String(title || '').replace(/"/g, "'")}","deck":"一句中文导语","level":"C1","topic":"markets","suggestedTag":"",
@@ -684,6 +749,7 @@ exam 只能使用 IELTS / TOEFL / FINANCE，可多选。
 match 不得填写公司、机构、人物、产品、国家或项目等上下文实体。
 ${KNOWLEDGE_CASE_RULES}
 即使内容质量一般，也必须返回 vocab 和 knowledge；不确定时返回最相关的 1 个词汇和 1 张知识卡。
+${titleRule}
 
 原文段落：
 ${paragraph}`;
@@ -1474,7 +1540,14 @@ function modelQualityRejects(reason) {
 }
 
 async function annotate(body, onProgress = () => {}) {
-  const { paragraphs, title, vocabFocus } = body;
+  const {
+    paragraphs,
+    title,
+    vocabFocus,
+    sourceKind = 'article',
+    sourceTitle = '',
+    originalEnglishTitle = ''
+  } = body;
   onProgress({ step: 'clean', percent: 5, message: '正文清洗与质量校验' });
   const sourceParagraphs = (paragraphs || []).map(p => String(p || '').trim()).filter(Boolean);
   if (!sourceParagraphs.length) throw new Error('缺少需要标注的正文段落');
@@ -1504,15 +1577,32 @@ async function annotate(body, onProgress = () => {}) {
       message: `分段翻译与质量分析 ${index + 1}/${chunks.length}`
     });
     try {
-      results.push(await requestLLMJson(body, buildPrompt({ title, paragraphs: chunk, vocabFocus })));
+      results.push(await requestLLMJson(body, buildPrompt({
+        title,
+        paragraphs: chunk,
+        vocabFocus,
+        sourceKind,
+        sourceTitle,
+        originalEnglishTitle
+      })));
     } catch (error) {
       for (const paragraph of chunk) {
-        results.push(await requestLLMJson(body, buildCompactPrompt(title, paragraph, vocabFocus)));
+        results.push(await requestLLMJson(body, buildCompactPrompt(title, paragraph, vocabFocus, {
+          sourceKind,
+          originalEnglishTitle
+        })));
       }
     }
   }
   onProgress({ step: 'enrich', percent: 82, message: '生成词汇、知识卡与权威依据' });
-  const art = mergeAnnotationResults(results, title);
+  const art = mergeAnnotationResults(results, originalEnglishTitle || title);
+  if (sourceKind === 'wechat') {
+    const recognizedTitle = isStrictEnglishTitle(originalEnglishTitle)
+      ? normalizeTitleCandidate(originalEnglishTitle)
+      : '';
+    art.title = recognizedTitle || (isStrictEnglishTitle(art.title) ? normalizeTitleCandidate(art.title) : '');
+    if (!art.title) throw new Error('公众号文章未能生成有效英文标题，请重试');
+  }
   const qualityFalseChunks = results.filter(item => item.quality === false);
   if (results.length && qualityFalseChunks.length === results.length) {
     const rejectionReason = results.find(item => modelQualityRejects(item.qualityReason))?.qualityReason;
@@ -3228,6 +3318,42 @@ async function handleRequest(req, res) {
       return json(res, 200, { ok: true, backup: null });
     } catch (e) {
       return json(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  if (p === '/api/recovery/articles' && req.method === 'GET') {
+    try {
+      if (u.searchParams.get('automation') === '1') {
+        return json(res, 200, { ok: true, articles: [] });
+      }
+      const recoveryDir = BACKUP_DIR;
+      const names = fs.existsSync(recoveryDir)
+        ? fs.readdirSync(recoveryDir)
+            .filter(name => name.endsWith('.json'))
+            .sort()
+            .reverse()
+        : [];
+      const ids = new Set();
+      const urls = new Set();
+      const articles = [];
+      for (const name of names.slice(0, 20)) {
+        try {
+          const backup = JSON.parse(fs.readFileSync(path.join(recoveryDir, name), 'utf8'));
+          for (const article of Array.isArray(backup?.custom) ? backup.custom : []) {
+            const id = String(article?.id || '').trim();
+            const url = String(article?._url || '').trim();
+            if (!id || !article?.title || ids.has(id) || (url && urls.has(url))) continue;
+            ids.add(id);
+            if (url) urls.add(url);
+            articles.push(article);
+            if (articles.length >= 100) break;
+          }
+          if (articles.length >= 100) break;
+        } catch {}
+      }
+      return json(res, 200, { ok: true, articles });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: String(e.message || e), articles: [] });
     }
   }
 

@@ -33,6 +33,33 @@ try {
   const files = await fs.readdir(path.join(dataRoot, 'backups'));
   assert.equal(files.length, 1);
   assert.equal(files[0].endsWith('.json'), true);
+  await fs.writeFile(
+    path.join(dataRoot, 'backups', 'older.json'),
+    JSON.stringify({
+      custom: [
+        { id: 'older-article', title: 'Older imported article', _url: 'https://example.test/older', paragraphs: [] },
+        { id: 'shared-article', title: 'Shared imported article', _url: 'https://example.test/shared', paragraphs: [] }
+      ]
+    }),
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(dataRoot, 'backups', 'newer.json'),
+    JSON.stringify({
+      custom: [
+        { id: 'newer-article', title: 'Newer imported article', _url: 'https://example.test/newer', paragraphs: [] },
+        { id: 'shared-article', title: 'Shared imported article', _url: 'https://example.test/shared', paragraphs: [] }
+      ]
+    }),
+    'utf8'
+  );
+  const recoveredArticles = await fetch(`${instance.url}/api/recovery/articles`);
+  assert.equal(recoveredArticles.status, 200);
+  const recovered = await recoveredArticles.json();
+  assert.deepEqual(
+    recovered.articles.map(article => article.id).sort(),
+    ['newer-article', 'older-article', 'shared-article']
+  );
   await assert.doesNotReject(fs.access(path.join(dataRoot, 'credentials')));
 } finally {
   await instance.close();

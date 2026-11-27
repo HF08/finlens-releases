@@ -5,20 +5,20 @@
 ## 适用范围
 
 - Windows 10 / Windows 11，x64。
-- 当前版本：`0.1.22`。
+- 当前版本：`0.1.23`。
 - 当前安装包是**未签名测试版**，仅供本人和少数设备使用。
 
 安装文件：
 
 ```text
-release\FinLens-0.1.22-x64-Setup.exe
-release\FinLens-0.1.22-x64-Setup.exe.sha256
+release\FinLens-0.1.23-x64-Setup.exe
+release\FinLens-0.1.23-x64-Setup.exe.sha256
 ```
 
 ## 安装
 
 1. 下载或复制上述安装文件。
-2. 双击 `FinLens-0.1.22-x64-Setup.exe`。
+2. 双击 `FinLens-0.1.23-x64-Setup.exe`。
 3. 按当前用户安装，不需要管理员权限。
 4. 安装完成后可从桌面或开始菜单启动。
 
@@ -168,7 +168,7 @@ npm run desktop:verify:artifact
 ## 发布说明模板
 
 ```text
-FinLens 0.1.22 Windows x64 未签名测试版
+FinLens 0.1.23 Windows x64 未签名测试版
 
 - 当前安装包未进行代码签名，Windows 可能显示未知发布者提示。
 - 安装不需要管理员权限。

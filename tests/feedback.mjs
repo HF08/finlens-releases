@@ -26,7 +26,7 @@ const ok = (name, condition, extra = '') => {
 
 const mockArticle = {
   title: 'Uploaded Finance Article',
-  deck: 'A complete annotation path for uploaded and WeChat content.',
+  deck: '投资者正在重新评估长期政府债务的期限溢价与久期风险。',
   level: 'C1',
   topic: 'markets',
   paragraphs: [{
@@ -69,7 +69,7 @@ const mockArticle = {
   }]
 };
 
-const wechatHtml = `<!doctype html><html><head><title>微信公众号测试文章</title></head><body>
+const wechatHtml = `<!doctype html><html><head><title>微信公众号测试文章</title><meta property="og:title" content="Bond Investors Demand a Larger Term Premium"></head><body>
 <div id="js_content">
 <p>The term premium has risen as investors demand more compensation for holding long-dated government debt.</p>
 <p>Portfolio managers are rethinking duration risk as fiscal supply increases.</p>
@@ -557,11 +557,20 @@ if (fs.existsSync(pdfFixture)) {
 
 await page.locator('#btnImport').click();
 await page.fill('#importUrl', MOCK + '/wechat/s');
-await page.fill('#importSource', '微信公众号');
+await page.fill('#importSource', '');
 await page.locator('#btnImportGo').click();
 await page.locator('#importModal').waitFor({ state: 'hidden', timeout: 8000 });
 const wechatTitle = await page.locator('.doc-title').innerText();
-ok('WeChat article URL fetch and annotation works', wechatTitle.includes('微信公众号'), wechatTitle);
+const wechatDeck = await page.locator('.doc-deck').innerText();
+const wechatSource = await page.evaluate(() =>
+  (S.custom || []).find(article => article._url.includes('/wechat/s'))?.source || '');
+ok('WeChat article URL fetch and annotation works', wechatTitle.length > 0, wechatTitle);
+ok('WeChat import defaults to the same annotated article flow with a clear source label',
+  wechatSource === '微信公众号', wechatSource);
+ok('WeChat keeps the original English headline and places the Chinese summary below it',
+  wechatTitle === 'Bond Investors Demand a Larger Term Premium' &&
+  wechatDeck === mockArticle.deck,
+  `${wechatTitle} | ${wechatDeck}`);
 await page.locator('#sideTabs button[data-tab="analysis"]').click();
 ok('Imported articles render translated English and finance analysis',
   await page.locator('.para-zh').count() > 0 && await page.locator('.analysis-card').count() > 0);

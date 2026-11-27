@@ -1121,13 +1121,22 @@ const contentServer = http.createServer((request, response) => {
     </article></body></html>`);
   }
   if (request.url === '/wechat-rich') {
-    return response.end(`<!doctype html><html><head><title>微信公众号英文文章</title></head><body>
+    return response.end(`<!doctype html><html><head><title>微信公众号英文文章 - 微信公众平台</title><meta property="og:title" content="Bond Investors Demand a Larger Term Premium"></head><body>
       <div id="js_content">
         <p>欢迎阅读本期财经英语精读，点击蓝字关注公众号并设为星标。</p>
         <p>推荐阅读：如何快速提高英语听力 | 免责声明：本文不构成投资建议。</p>
         <section>The Federal Open Market Committee said inflation remains elevated and that future decisions will depend on incoming employment and price data.</section>
         <section><span>Bond investors demanded a larger term premium as fiscal supply increased and uncertainty around the policy path remained elevated.</span></section>
         <p>广告合作请联系后台，阅读原文查看更多课程。</p>
+      </div>
+    </body></html>`);
+  }
+  if (request.url === '/wechat-false-title') {
+    return response.end(`<!doctype html><html><head><title>公众号文章</title></head><body>
+      <h1>Click here to subscribe</h1>
+      <div id="js_content">
+        <p>The Federal Reserve said inflation remains elevated and future policy decisions will depend on incoming employment and price data.</p>
+        <p>Investors are monitoring liquidity, credit conditions, and the path of interest rates across global markets.</p>
       </div>
     </body></html>`);
   }
@@ -1215,10 +1224,22 @@ try {
   const richWechatText = JSON.stringify(richWechatResult.body);
   check('WeChat extraction selects English article blocks and rejects Chinese boilerplate',
     richWechatResult.body.ok &&
+    richWechatResult.body.title === '微信公众号英文文章' &&
+    richWechatResult.body.englishTitle === 'Bond Investors Demand a Larger Term Premium' &&
     richWechatResult.body.paragraphs.length === 2 &&
     richWechatResult.body.paragraphs.every(paragraph => /[A-Za-z]/.test(paragraph)) &&
     !/欢迎阅读|推荐阅读|点击蓝字|广告合作|阅读原文/.test(richWechatText),
     richWechatText.slice(0, 300));
+  check('WeChat extraction does not mistake a Chinese page title for an English headline',
+    wechatResult.body.englishTitle === '',
+    wechatResult.body.englishTitle);
+  const falseTitleResult = await page.evaluate(async url => {
+    const response = await fetch('/api/fetch?url=' + encodeURIComponent(url));
+    return response.json();
+  }, CONTENT + '/wechat-false-title');
+  check('WeChat headline detection rejects calls to action presented as headings',
+    falseTitleResult.ok && falseTitleResult.englishTitle === '',
+    falseTitleResult.englishTitle);
   const shortResult = await page.evaluate(async url => {
     const response = await fetch('/api/fetch?url=' + encodeURIComponent(url));
     return { status: response.status, body: await response.json() };

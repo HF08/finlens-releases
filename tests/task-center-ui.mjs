@@ -14,6 +14,29 @@ page.on('pageerror', error => errors.push(error.message));
 try {
   await page.goto(BASE, { waitUntil: 'networkidle' });
 
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('finlens.v1') || '{}');
+    state.tasks = [{
+      id: 'interrupted-task',
+      type: 'crawl',
+      title: '上次中断的抓取',
+      status: 'running',
+      progress: 35,
+      message: '正在读取订阅源',
+      createdAt: Date.now() - 60000,
+      updatedAt: Date.now() - 60000
+    }];
+    localStorage.setItem('finlens.v1', JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  const recoveredTasks = await page.evaluate(() => ({
+    task: S.tasks.find(task => task.id === 'interrupted-task'),
+    summary: taskCenterSummary()
+  }));
+  assert.equal(recoveredTasks.task?.status, 'cancelled');
+  assert.equal(recoveredTasks.summary.running, 0);
+  assert.match(recoveredTasks.task?.message || '', /任务尚未完成/);
+
   const created = await page.evaluate(() => {
     const task = startTask('crawl', {
       title: '抓取测试',
@@ -62,6 +85,25 @@ try {
   assert.match(failedText, /network down/);
   assert.match(failedText, /检查网络连接/);
   assert.match(failedText, /重试/);
+
+  const timeoutMessage = await page.evaluate(async () => {
+    const originalFetch = window.fetch;
+    window.fetch = (url, options = {}) => new Promise((resolve, reject) => {
+      options.signal?.addEventListener('abort', () => {
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
+    try {
+      await fetchJsonWithTimeout('/never', {}, 50, 'request timeout fixture');
+      return '';
+    } catch (error) {
+      return error.message;
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+  assert.equal(timeoutMessage, 'request timeout fixture');
+
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileLayout = await page.evaluate(() => {
     const modal = document.querySelector('#taskCenterModal .modal-body');

@@ -10,6 +10,9 @@ const LEGACY_RECOVERY_VERSION = '2026-11-12-backup-v1';
 const DATA_RESET_VERSION = '2026-11-03-feedback-reset-v1';
 const DAY_MS = 86400000;
 const MAX_CUSTOM_ARTICLES = 100;
+const CUSTOM_ARTICLE_RECOVERY_VERSION = 1;
+const CRAWL_REQUEST_TIMEOUT_MS = 60000;
+const TASK_STALL_TIMEOUT_MS = 90000;
 const LearningEvents = window.FinLensLearningEvents;
 const TaskDomain = window.FinLensTaskCenter;
 const KNOWLEDGE_CATEGORIES = {
@@ -241,6 +244,21 @@ function toast(msg) {
   t._h = setTimeout(() => (t.hidden = true), 2000);
 }
 
+async function fetchJsonWithTimeout(url, options, timeoutMs, timeoutMessage) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const data = await response.json();
+    return { response, data };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(timeoutMessage);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const AI_PROGRESS_STEPS = ['clean', 'connect', 'analyze', 'enrich', 'save'];
 const TASK_TYPE_LABELS = {
   annotation: '文章标注',
@@ -303,6 +321,26 @@ function failTaskState(taskOrId, error, recovery = []) {
 
 function taskCenterSummary() {
   return S ? TaskDomain.taskSummary(S) : { running: 0, failed: 0, success: 0, active: false, latest: null, runningTasks: [], failedTasks: [] };
+}
+
+function recoverInterruptedTasks() {
+  if (!S || !Array.isArray(S.tasks)) return 0;
+  const now = Date.now();
+  let recovered = 0;
+  for (const task of S.tasks) {
+    if (!['running', 'queued'].includes(task.status)) continue;
+    task.status = 'cancelled';
+    task.message = '应用上次退出时任务尚未完成，已标记中断';
+    task.error = '';
+    task.finishedAt = now;
+    task.updatedAt = now;
+    recovered += 1;
+  }
+  if (recovered) {
+    save();
+    renderTaskCenter();
+  }
+  return recovered;
 }
 
 function annotationRecoveryFor(message) {
@@ -406,7 +444,7 @@ function retryTask(task) {
   if (!task) return;
   closeTaskCenter();
   if (task.type === 'crawl') {
-    runCrawl({ silent: false });
+    runCrawl({ silent: false, retryItems: task.meta?.retryItems || [] });
     return;
   }
   if (task.type === 'annotation' && task.articleId) {
@@ -474,11 +512,24 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     meta: { url: payload.url || '' },
     message: '准备标注'
   });
+  const controller = new AbortController();
+  const stallTimeoutMs = Math.max(1000, Number(window.__FINLENS_TASK_STALL_TIMEOUT_MS__) || TASK_STALL_TIMEOUT_MS);
+  let stallTimer = null;
+  let stalled = false;
+  const armStallTimer = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, stallTimeoutMs);
+  };
+  armStallTimer();
   try {
     const response = await fetch('/api/annotate-stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     const contentType = response.headers.get('content-type') || '';
     if (!response.ok || !contentType.includes('ndjson') || !response.body) {
@@ -494,6 +545,7 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     let streamError = '';
     while (true) {
       const { value, done } = await reader.read();
+      armStallTimer();
       buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
@@ -527,8 +579,13 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     finishTaskState(task, { message: '标注完成' });
     return finalArticle;
   } catch (error) {
-    failTaskState(task, error.message || '标注失败', annotationRecoveryFor(error.message));
-    throw error;
+    const message = stalled
+      ? `任务超过 ${Math.round(stallTimeoutMs / 1000)} 秒没有收到新进展，已停止；可重试同一任务`
+      : error.message || '标注失败';
+    failTaskState(task, message, annotationRecoveryFor(message));
+    throw new Error(message);
+  } finally {
+    if (stallTimer) clearTimeout(stallTimer);
   }
 }
 
@@ -765,6 +822,32 @@ async function restoreLegacyBackupIfNeeded() {
   }
 }
 
+async function recoverMissingCustomArticles() {
+  if (!S || (Number(S.customRecoveryVersion) || 0) >= CUSTOM_ARTICLE_RECOVERY_VERSION) return 0;
+  try {
+    const response = await fetch('/api/recovery/articles' + (navigator.webdriver ? '?automation=1' : ''), {
+      cache: 'no-store'
+    });
+    if (!response.ok) return 0;
+    const data = await response.json();
+    if (!data?.ok || !Array.isArray(data.articles)) return 0;
+    const ids = new Set((S.custom || []).map(article => article.id).filter(Boolean));
+    const urls = new Set((S.custom || []).map(article => article._url).filter(Boolean));
+    const missing = data.articles
+      .filter(article => article && article.id && article.title)
+      .filter(article => !ids.has(article.id) && (!article._url || !urls.has(article._url)))
+      .map(article => sanitizeArticleFields(article));
+    if (missing.length) {
+      S.custom = [...(S.custom || []), ...missing].slice(0, MAX_CUSTOM_ARTICLES);
+    }
+    S.customRecoveryVersion = CUSTOM_ARTICLE_RECOVERY_VERSION;
+    save();
+    return missing.length;
+  } catch {
+    return 0;
+  }
+}
+
 function touchDay() {
   const d = todayStr();
   if (!S.days.includes(d)) { S.days.push(d); S.days = S.days.slice(-400); }
@@ -784,6 +867,8 @@ async function boot() {
   const didReset = applyOneTimeDataReset();
   const didRestoreLegacyBackup = await restoreLegacyBackupIfNeeded();
   S = loadState();
+  const recoveredArticleCount = await recoverMissingCustomArticles();
+  const interruptedTaskCount = recoverInterruptedTasks();
   builtInArticles = ARTICLES.map(sanitizeArticleFields);
   S.custom = (S.custom || []).map(sanitizeArticleFields);
   ARTICLES.splice(0, ARTICLES.length, ...builtInArticles, ...(S.custom || []));
@@ -827,6 +912,8 @@ async function boot() {
   wireBackupLifecycle();
   if (didReset) toast('历史学习数据已清空，当前使用初始设置');
   if (didRestoreLegacyBackup) toast('检测到旧版学习备份，已自动恢复文章、词汇和学习进度');
+  if (recoveredArticleCount) toast(`已从旧备份恢复 ${recoveredArticleCount} 篇被遗漏的导入文章`);
+  if (interruptedTaskCount) toast(`已收尾 ${interruptedTaskCount} 个上次中断的任务`);
 }
 
 /* ---------------- 导航 ---------------- */
@@ -7264,7 +7351,7 @@ function scheduleCrawl() {
   paintCrawlStatus();
 }
 
-async function runCrawl({ silent = false } = {}) {
+async function runCrawl({ silent = false, retryItems = null } = {}) {
   if (crawlRunning) return false;
   const feeds = parseCrawlFeeds();
   if (!feeds.length) {
@@ -7284,10 +7371,10 @@ async function runCrawl({ silent = false } = {}) {
 
   crawlRunning = true;
   activeCrawlTask = startTask('crawl', {
-    title: silent ? '自动抓取' : '手动抓取',
+    title: silent ? '自动抓取' : (retryItems?.length ? '重新抓取' : '手动抓取'),
     subtitle: `${feeds.length} 个订阅源`,
     message: '正在读取订阅源',
-    meta: { from: range.from, to: range.to, maxItems: S.settings.crawlMaxItems }
+    meta: { from: range.from, to: range.to, maxItems: S.settings.crawlMaxItems, retryItems: [] }
   });
   const btn = $('#btnCrawlNow');
   if (btn) btn.disabled = true;
@@ -7297,22 +7384,37 @@ async function runCrawl({ silent = false } = {}) {
   const sourceErrors = [];
   const articleErrors = [];
   const warnings = [];
+  const failedCandidates = [];
   let imported = 0;
   let lastImportedId = null;
   if (S.settings.crawlAnnotate && !hasEngineCredential()) warnings.push('未配置模型凭据，本次仅保存原文');
 
   try {
-    const feedResp = await fetch('/api/feed', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ feeds, from: range.from, to: range.to, limit: Math.min(50, maxItems * 4) })
-    });
-    const feedData = await feedResp.json();
-    if (!feedData.ok) throw new Error(feedData.error || '订阅源读取失败');
-    (feedData.errors || []).forEach(error => sourceErrors.push(error));
-
-    const existingUrls = new Set(ARTICLES.map(a => a._url).filter(Boolean));
-    const candidates = (feedData.items || []).filter(item => !existingUrls.has(item.url));
+    let candidates = [];
+    if (Array.isArray(retryItems) && retryItems.length) {
+      candidates = retryItems
+        .map(item => ({
+          url: String(item?.url || '').trim(),
+          title: String(item?.title || '').trim(),
+          summary: String(item?.summary || '').trim(),
+          source: String(item?.source || '').trim(),
+          date: String(item?.date || '').trim()
+        }))
+        .filter(item => /^https?:\/\//i.test(item.url));
+      updateTaskState(activeCrawlTask, {
+        message: `正在重试原任务的 ${candidates.length} 篇文章`
+      });
+    } else {
+      const { data: feedData } = await fetchJsonWithTimeout('/api/feed', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ feeds, from: range.from, to: range.to, limit: Math.min(50, maxItems * 4) })
+      }, CRAWL_REQUEST_TIMEOUT_MS, '订阅源读取超时，任务已停止；可稍后重试');
+      if (!feedData.ok) throw new Error(feedData.error || '订阅源读取失败');
+      (feedData.errors || []).forEach(error => sourceErrors.push(error));
+      const existingUrls = new Set(ARTICLES.map(a => a._url).filter(Boolean));
+      candidates = (feedData.items || []).filter(item => !existingUrls.has(item.url));
+    }
     if (!candidates.length) {
       S.lastCrawlAt = Date.now();
       save();
@@ -7330,8 +7432,12 @@ async function runCrawl({ silent = false } = {}) {
         message: `抓取 ${imported + 1}/${maxItems} · 尝试 ${index + 1}/${attemptLimit} · ${item.title}`
       });
       try {
-        const pageResp = await fetch('/api/fetch?url=' + encodeURIComponent(item.url));
-        const pageData = await pageResp.json();
+        const { data: pageData } = await fetchJsonWithTimeout(
+          '/api/fetch?url=' + encodeURIComponent(item.url),
+          {},
+          CRAWL_REQUEST_TIMEOUT_MS,
+          `正文抓取超时：${item.title || item.url}`
+        );
         if (!pageData.ok) throw new Error(pageData.error || '正文抓取失败');
         let raw = {
           title: item.title || pageData.title,
@@ -7372,6 +7478,13 @@ async function runCrawl({ silent = false } = {}) {
         }
       } catch (e) {
         articleErrors.push(`${item.title}: ${e.message || e}`);
+        failedCandidates.push({
+          url: item.url,
+          title: item.title || '',
+          summary: item.summary || '',
+          source: item.source || '',
+          date: item.date || ''
+        });
       }
     }
 
@@ -7386,6 +7499,13 @@ async function runCrawl({ silent = false } = {}) {
     }
     const errors = [...sourceErrors, ...articleErrors];
     setCrawlDiagnostics({ '订阅源失败': sourceErrors, '正文抓取失败': articleErrors, '处理提示': warnings });
+    const currentTaskMeta = S.tasks.find(task => task.id === activeCrawlTask.id)?.meta || activeCrawlTask.meta || {};
+    updateTaskState(activeCrawlTask, {
+      meta: {
+        ...currentTaskMeta,
+        retryItems: failedCandidates
+      }
+    });
     const errorSuffix = errors.length ? ` · ${errors.length} 项失败` : '';
     const warningSuffix = warnings.length ? ` · ${warnings[0]}` : '';
     const recovery = [...sourceErrors, ...articleErrors, ...warnings]
@@ -8309,6 +8429,15 @@ function clearVocabularyOverride(articleId) {
   delete S.vocabOverrides[articleId];
 }
 
+function isStrictEnglishTitle(value) {
+  const title = String(value || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = title.match(/[A-Za-z][A-Za-z0-9'’-]*/g) || [];
+  if (!title || /[\u3400-\u9fff]/.test(title) || title.length < 12 || title.length > 160) return false;
+  if (words.length < 3 || words.length > 24) return false;
+  if (/[.。]/.test(title)) return false;
+  return !/subscribe|follow us|click here|read more|advertisement|sponsored|image source|微信公众平台/i.test(title);
+}
+
 function normalizeArticle(raw, url, srcName) {
   const id = stableId(url);
   return sanitizeArticleFields({
@@ -8623,15 +8752,16 @@ async function annotateAndSave(extracted, url, source, status, options = {}) {
     if (options.onFailure) options.onFailure(error, { extracted, url, source });
     return false;
   }
+  const sourceLabel = String(source || '').trim() || (extracted.kind === 'wechat' ? '微信公众号' : '');
   const rawArticle = (annotationError = '') => normalizeArticle({
-    title: extracted.title,
+    title: extracted.englishTitle || extracted.title,
     deck: extracted.kind === 'wechat' ? '微信公众号导入，已完成正文提取。' : '已保存原文，可稍后启用模型完成精读解析。',
     level: 'C1',
     topic: 'markets',
     paragraphs: extracted.paragraphs.map(en => ({ en, zh: '', note: '' })),
     _annotationStatus: 'failed',
     _annotationError: annotationError
-  }, url, source);
+  }, url, sourceLabel);
 
   if (!hasEngineCredential() && options.allowRawMissingKey) {
     const art = rawArticle('未配置模型 API Key');
@@ -8649,12 +8779,22 @@ async function annotateAndSave(extracted, url, source, status, options = {}) {
         ...(await modelRequestPayload()),
         paragraphs: extracted.paragraphs,
         title: extracted.title,
+        sourceKind: extracted.kind || 'article',
+        sourceTitle: extracted.title || '',
+        originalEnglishTitle: extracted.englishTitle || '',
         vocabFocus: S.settings.vocabFocus
     }, `导入标注 · ${extracted.title}`);
-    const art = normalizeArticle(article, url, source);
+    const art = normalizeArticle(article, url, sourceLabel);
     art._annotationStatus = 'complete';
     art._annotationError = '';
-    if (extracted.kind && extracted.kind !== 'article' && extracted.title) art.title = extracted.title;
+    if (extracted.kind === 'wechat') {
+      const originalTitle = isStrictEnglishTitle(extracted.englishTitle) ? extracted.englishTitle : '';
+      const modelTitle = isStrictEnglishTitle(article.title) ? article.title : '';
+      art.title = originalTitle || modelTitle;
+      if (!art.title) throw new Error('公众号未返回有效英文标题，请重试');
+    } else if (extracted.kind && extracted.kind !== 'article' && extracted.title) {
+      art.title = extracted.title;
+    }
     if (!art.paragraphs.length) throw new Error('返回内容缺少段落');
     if (!persistOrReplaceCustom(art, url)) {
       openExistingImportedArticle(url);
@@ -8783,27 +8923,34 @@ async function doImport() {
   const status = $('#importStatus');
   if (!/^https?:\/\//i.test(url)) { status.textContent = '请填写完整的 http(s) 链接'; status.style.color = 'var(--danger)'; return; }
   if (openExistingImportedArticle(url)) return;
+  const isWechatUrl = /^https?:\/\/mp\.weixin\.qq\.com\//i.test(url);
   lastImportAttempt = { type: 'url' };
   clearImportFailure();
 
   const btn = $('#btnImportGo');
   btn.disabled = true;
   const setSt = (t, bad) => { status.textContent = t; status.style.color = bad ? 'var(--danger)' : 'var(--ink-3)'; };
-  setSt('抓取正文…');
+  setSt(isWechatUrl ? '抓取公众号正文…' : '抓取正文…');
 
   let extracted = null;
+  let sourceName = $('#importSource').value.trim() || (isWechatUrl ? '微信公众号' : '');
   try {
-    const r = await fetch('/api/fetch?url=' + encodeURIComponent(url));
-    const j = await r.json();
+    const { data: j } = await fetchJsonWithTimeout(
+      '/api/fetch?url=' + encodeURIComponent(url),
+      {},
+      CRAWL_REQUEST_TIMEOUT_MS,
+      isWechatUrl ? '公众号正文抓取超时，请粘贴正文或稍后重试' : '正文抓取超时，请稍后重试'
+    );
     if (!j.ok) throw new Error(j.error || '抓取失败');
     extracted = j;
+    if (j.kind === 'wechat' && !sourceName) sourceName = '微信公众号';
     const wc = j.paragraphs.join(' ').split(/\s+/).length;
     $('#importPreview').innerHTML = `<div class="import-pv">
       <b>${esc(j.title || '(无标题)')}</b>
       <span>已提取 ${j.paragraphs.length} 段 · 约 ${wc} 词${j.kind === 'wechat' ? ' · 微信公众号' : ''}</span>
       <p>${esc(j.paragraphs[0].slice(0, 180))}…</p></div>`;
   } catch (e) {
-    setSt('抓取失败：' + e.message + '。可改用上传文档或直接粘贴正文。', true);
+    setSt(`${isWechatUrl ? '公众号抓取失败' : '抓取失败'}：${e.message}。可改用上传文档或直接粘贴正文。`, true);
     showImportFailure(e, { stage: '正文抓取', retryType: 'url', url });
     btn.disabled = false;
     return;
@@ -8812,7 +8959,7 @@ async function doImport() {
   await annotateAndSave(
     extracted,
     url,
-    $('#importSource').value,
+    sourceName,
     status,
     {
       allowRawMissingKey: false,

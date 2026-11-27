@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 const req = createRequire(process.env.PW_BASE || 'C:/Users/NORA/.workbuddy/binaries/node/workspace/');
@@ -14,6 +15,8 @@ const BASE = `http://127.0.0.1:${APP_PORT}`;
 const MOCK_ARTICLE = `http://127.0.0.1:${MOCK_ARTICLE_PORT}/article`;
 const OUT = path.resolve('tests/shots/feedback-final');
 fs.mkdirSync(OUT, { recursive: true });
+const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'finlens-article-management-'));
+const TEST_DATA_ROOT = path.join(TEST_ROOT, 'data');
 
 const customArticle = {
   id: 'custom-manage',
@@ -197,7 +200,12 @@ await new Promise(resolve => articleServer.listen(MOCK_ARTICLE_PORT, '127.0.0.1'
 try {
   server = spawn(process.execPath, ['server/server.mjs'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(APP_PORT) },
+    env: {
+      ...process.env,
+      PORT: String(APP_PORT),
+      FINLENS_DATA_DIR: TEST_DATA_ROOT,
+      FINLENS_BACKUP_DIR: path.join(TEST_DATA_ROOT, 'backups')
+    },
     stdio: 'ignore'
   });
   await waitForServer();
@@ -430,6 +438,7 @@ try {
 
   const crawlContext = await browser.newContext({ viewport: { width: 1512, height: 950 } });
   const crawlPage = await crawlContext.newPage();
+  const crawlFetches = [];
   await crawlPage.route('**/api/feed', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -448,6 +457,7 @@ try {
   await crawlPage.route('**/api/fetch?url=*', route => {
     const url = new URL(route.request().url());
     const target = url.searchParams.get('url');
+    crawlFetches.push(target);
     if (/article-[12]$/.test(target)) {
       return route.fulfill({
         status: 502,
@@ -505,6 +515,10 @@ try {
     /3 项失败/.test(crawlTask.message || '') &&
     crawlTask.recovery?.length >= 3,
     JSON.stringify(crawlTask));
+  check('Failed crawler task stores the exact article URLs needed for retry',
+    crawlTask?.meta?.retryItems?.map(item => item.url).sort().join('|') ===
+      'https://example.test/article-1|https://example.test/article-2',
+    JSON.stringify(crawlTask?.meta?.retryItems));
   await crawlPage.locator('#importModal .modal-head [data-close]').click();
   await crawlPage.locator('#engineCard').click();
   await crawlPage.locator('#taskCenterModal [data-task-filter="failed"]').click();
@@ -515,6 +529,21 @@ try {
     detailText.includes('Crawl candidate 2'),
     detailText.slice(0, 180));
   await crawlPage.screenshot({ path: path.join(OUT, 'crawl-failure-details.png') });
+  const retryStart = crawlFetches.length;
+  await crawlPage.locator(`[data-task-retry="${crawlTask.id}"]`).click();
+  await crawlPage.waitForFunction(previousTaskId => {
+    const latest = taskCenterSummary().latest;
+    return latest?.id !== previousTaskId &&
+      latest?.type === 'crawl' &&
+      ['success', 'failed'].includes(latest.status);
+  }, crawlTask.id, { timeout: 10000 });
+  const retriedFetches = crawlFetches.slice(retryStart);
+  const retriedTask = await crawlPage.evaluate(() => taskCenterSummary().latest);
+  check('Crawler retry requests the same failed articles instead of the latest feed item',
+    retriedTask.title === '重新抓取' &&
+    retriedFetches.sort().join('|') ===
+      'https://example.test/article-1|https://example.test/article-2',
+    JSON.stringify({ title: retriedTask.title, retriedFetches }));
   const importCapacity = await crawlPage.evaluate(() => {
     for (let index = 0; index < 35; index += 1) {
       persistCustom({
@@ -554,10 +583,29 @@ try {
     persistedCapacity.badge === '42',
     JSON.stringify(persistedCapacity));
   await crawlContext.close();
+
+  const recoveryContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const recoveryPage = await recoveryContext.newPage();
+  await recoveryPage.route('**/api/recovery/articles*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, articles: [customArticle] })
+  }));
+  await recoveryPage.goto(BASE, { waitUntil: 'networkidle' });
+  const recovered = await recoveryPage.evaluate(() => ({
+    custom: S.custom.length,
+    badge: document.querySelector('#navArticles')?.textContent,
+    marker: S.customRecoveryVersion
+  }));
+  check('Missing imported articles are recovered from backup history on startup',
+    recovered.custom === 1 && recovered.badge === '6' && recovered.marker === 1,
+    JSON.stringify(recovered));
+  await recoveryContext.close();
 } finally {
   if (browser) await browser.close();
   if (server && !server.killed) server.kill();
   articleServer.close();
+  fs.rmSync(TEST_ROOT, { recursive: true, force: true });
 }
 
 const failed = results.filter(result => !result.pass);
