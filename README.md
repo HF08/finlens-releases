@@ -25,7 +25,7 @@ node server/server.mjs          # 默认 http://127.0.0.1:8787
 当前提供 Windows 10/11 x64 的 Electron 安装版：
 
 ```text
-release\FinLens-0.3.0-x64-Setup.exe
+release\FinLens-0.3.1-x64-Setup.exe
 ```
 
 安装按当前用户完成，不需要管理员权限；用户数据位于 `%APPDATA%\FinLens`，卸载默认保留学习记录。安装版会从公开的 GitHub Releases 仓库检查更新，下载和重启均由用户确认；升级会替换旧程序目录并保留用户数据。桌面版支持关闭到系统托盘继续运行，本地服务和自动抓取不会因隐藏窗口而停止。该版本是**未签名测试版**，Windows 可能提示未知发布者。安装、更新、数据位置、PDF 与构建说明见 [Windows 安装包指南](docs/windows-installer.md)。

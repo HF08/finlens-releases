@@ -104,6 +104,26 @@ if (!(await page.locator('#btnDone').innerText()).includes('已完成')) await p
 await page.waitForTimeout(300);
 const readN = await page.locator('#statArticles').innerText();
 ok('标记精读并计数', readN === '1', `statArticles=${readN}`);
+const repeatedReadStats = await page.evaluate(() => {
+  const articleId = cur.id;
+  setRead(false);
+  setRead(true);
+  const repeated = {
+    statArticles: document.querySelector('#statArticles').textContent,
+    goalRead: document.querySelector('#goalRead').textContent
+  };
+  S.read['stale-article-not-in-library'] = { done: true, ts: Date.now() };
+  renderStats();
+  const staleCount = document.querySelector('#statArticles').textContent;
+  delete S.read['stale-article-not-in-library'];
+  renderStats();
+  return { articleId, repeated, staleCount };
+});
+ok('Repeated completion does not duplicate daily or library article counts',
+  repeatedReadStats.repeated.statArticles === '1' &&
+  repeatedReadStats.repeated.goalRead === '1' &&
+  repeatedReadStats.staleCount === '1',
+  JSON.stringify(repeatedReadStats));
 const goalRead = await page.locator('#goalRead').innerText();
 ok('今日目标进度更新', goalRead === '1', `goalRead=${goalRead}`);
 

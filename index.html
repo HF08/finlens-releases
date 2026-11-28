@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FinLens · 财经外刊学习工作台</title>
 <link rel="icon" type="image/png" href="src/assets/finlens-icon.png">
-<link rel="stylesheet" href="src/styles.css?v=20261127-independent-sources-v59">
+<link rel="stylesheet" href="src/styles.css?v=20261128-learning-fixes-v60">
 </head>
 <body>
 
@@ -241,6 +241,8 @@
             <select id="articleSort" class="sel" aria-label="文章排序">
               <option value="date-desc">日期 · 最新优先</option>
               <option value="date-asc">日期 · 最早优先</option>
+              <option value="title-asc">标题 · A → Z</option>
+              <option value="title-desc">标题 · Z → A</option>
               <option value="source-asc">来源 · A → Z</option>
               <option value="source-desc">来源 · Z → A</option>
             </select>
@@ -704,6 +706,7 @@
           <label>每日复习词量</label>
           <input type="number" id="setWordTarget" min="5" max="200" value="12">
         </div>
+        <p class="hint target-validation" id="learningTargetError" hidden></p>
         <div class="set-row">
           <label>词汇信息</label>
           <div class="seg seg-sm" id="setVocabDetail">
@@ -1192,6 +1195,6 @@
 <script src="data/verified-knowledge-corrections.js"></script>
 <script src="src/learning-events.js"></script>
 <script src="src/task-center.js"></script>
-<script src="src/app.js?v=20261127-independent-sources-v59"></script>
+<script src="src/app.js?v=20261128-learning-fixes-v60"></script>
 </body>
 </html>

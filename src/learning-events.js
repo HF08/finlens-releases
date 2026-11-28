@@ -168,8 +168,8 @@
     return {
       date,
       items,
-      readTarget: Math.max(1, Math.min(20, Number(input.readTarget) || 1)),
-      wordTarget: Math.max(0, Math.min(500, Number(input.wordTarget) || 12)),
+      readTarget: Math.max(1, Math.min(10, Number(input.readTarget) || 1)),
+      wordTarget: Math.max(0, Math.min(200, Number(input.wordTarget) || 12)),
       note: String(input.note || '').trim().slice(0, 500),
       createdAt: Number(input.createdAt) || Date.now(),
       updatedAt: Number(input.updatedAt) || Date.now()

@@ -499,7 +499,14 @@ await page.locator('#btnCloseReview').click();
 
 await page.locator('#cardModeSeg button[data-cmode="flash"]').click();
 await page.locator('#btnFlashStart').click();
-await page.waitForTimeout(2300);
+const flashBeforeReveal = await page.locator('#cardsStage').innerText();
+await page.waitForTimeout(1200);
+const flashAfterReveal = await page.locator('#cardsStage').innerText();
+ok('Flash counter increments only when the Chinese answer appears',
+  !/\d+\s*\/\s*\d+/.test(flashBeforeReveal) &&
+  /\b1\s*\/\s*\d+\b/.test(flashAfterReveal),
+  `${flashBeforeReveal.slice(0, 80)} -> ${flashAfterReveal.slice(0, 100)}`);
+await page.waitForTimeout(1000);
 await page.locator('#btnFlashStop').click();
 const stoppedFlashWord = await page.locator('.flash-word').innerText();
 const stoppedHint = await page.locator('.flash-stopped').innerText();

@@ -1,5 +1,5 @@
 param(
-  [string]$Tag = "v0.3.0",
+  [string]$Tag = "v0.3.1",
   [string]$Repository = "HF08/finlens-releases"
 )
 

@@ -34,7 +34,7 @@ if (fs.statSync(dictionaryPath).size < 1024 * 1024) {
 if (pkg.main !== 'desktop/main.cjs') {
   throw new Error('package.json 的 main 必须指向 desktop/main.cjs');
 }
-if (pkg.version !== '0.3.0' || config.appId !== 'com.finlens.desktop' || config.productName !== 'FinLens') {
+if (pkg.version !== '0.3.1' || config.appId !== 'com.finlens.desktop' || config.productName !== 'FinLens') {
   throw new Error('桌面应用版本或产品元数据与发布规格不一致');
 }
 if (!config.extraResources?.some(item => item.from === 'data/dictionary/ecdict.sqlite')) {

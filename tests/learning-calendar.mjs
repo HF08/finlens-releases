@@ -49,6 +49,54 @@ try {
   assert.match(await page.locator('#planMonthLabel').innerText(), /年/);
   assert.ok(await page.locator('#planCalendarGrid [data-plan-date]').count() >= 28);
   assert.equal(await page.locator('[data-plan-note]').inputValue(), 'Calendar fixture');
+  const targetLimits = await page.evaluate(() => ({
+    settingsReadMax: document.querySelector('#setReadTarget')?.max,
+    settingsWordMax: document.querySelector('#setWordTarget')?.max,
+    planReadMax: document.querySelector('[data-plan-target="readTarget"]')?.max,
+    planWordMax: document.querySelector('[data-plan-target="wordTarget"]')?.max
+  }));
+  assert.deepEqual(targetLimits, {
+    settingsReadMax: '10',
+    settingsWordMax: '200',
+    planReadMax: '10',
+    planWordMax: '200'
+  });
+  const initialPlan = await page.evaluate(date => dayPlanState(date).items, created.date);
+  const nextArticleId = await page.evaluate(date => {
+    const planned = new Set(dayPlanState(date).items.map(item => item.articleId));
+    return ARTICLES.find(article => !planned.has(article.id))?.id || '';
+  }, created.date);
+  assert.ok(nextArticleId);
+  await page.selectOption('#planArticleSelect', nextArticleId);
+  await page.locator('#btnAddPlanItem').click();
+  await page.waitForFunction(
+    ({ date, count }) => dayPlanState(date).items.length === count + 1,
+    { date: created.date, count: initialPlan.length }
+  );
+  assert.match(await page.locator('#toast').innerText(), /已加入/);
+  await page.locator(`[data-remove-plan-item="${nextArticleId}"]`).click();
+  await page.waitForFunction(
+    ({ date, count }) => dayPlanState(date).items.length === count,
+    { date: created.date, count: initialPlan.length }
+  );
+  await page.locator('#editGoal').click();
+  await page.locator('#settingsModal').waitFor({ state: 'visible' });
+  const previousTargets = await page.evaluate(() => ({
+    readTarget: S.settings.readTarget,
+    wordTarget: S.settings.wordTarget
+  }));
+  await page.fill('#setReadTarget', '11');
+  await page.locator('#setReadTarget').press('Tab');
+  await page.locator('#learningTargetError').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#learningTargetError').innerText(), /1-10|1 到 10/);
+  assert.equal(await page.evaluate(() => S.settings.readTarget), previousTargets.readTarget);
+  await page.fill('#setWordTarget', '201');
+  await page.locator('#setWordTarget').press('Tab');
+  assert.match(await page.locator('#learningTargetError').innerText(), /5-200|5 到 200/);
+  assert.equal(await page.evaluate(() => S.settings.wordTarget), previousTargets.wordTarget);
+  await page.fill('#setReadTarget', String(previousTargets.readTarget));
+  await page.fill('#setWordTarget', String(previousTargets.wordTarget));
+  await page.locator('#settingsModal .modal-head [data-close]').click();
   assert.ok(await page.locator('#learningHeatmap .heatmap-cell').count() >= 100);
   const heatmapCellSize = await page.locator('#learningHeatmap .heatmap-cell').first()
     .evaluate(cell => {

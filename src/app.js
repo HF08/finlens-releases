@@ -10,6 +10,10 @@ const LEGACY_RECOVERY_VERSION = '2026-11-12-backup-v1';
 const DATA_RESET_VERSION = '2026-11-03-feedback-reset-v1';
 const DAY_MS = 86400000;
 const MAX_CUSTOM_ARTICLES = 100;
+const LEARNING_TARGET_RULES = {
+  readTarget: { min: 1, max: 10, label: '每日精读篇数' },
+  wordTarget: { min: 5, max: 200, label: '每日复习词量' }
+};
 const CUSTOM_ARTICLE_RECOVERY_VERSION = 1;
 const CRAWL_REQUEST_TIMEOUT_MS = 60000;
 const TASK_STALL_TIMEOUT_MS = 1800000;
@@ -243,6 +247,37 @@ function toast(msg) {
   t.hidden = false;
   clearTimeout(t._h);
   t._h = setTimeout(() => (t.hidden = true), 2000);
+}
+
+function validateLearningTarget(kind, rawValue) {
+  const rule = LEARNING_TARGET_RULES[kind];
+  const value = Number(rawValue);
+  if (!rule || !Number.isFinite(value) || !Number.isInteger(value) || value < rule.min || value > rule.max) {
+    return {
+      valid: false,
+      value: null,
+      message: `${rule?.label || '目标值'}必须在 ${rule?.min ?? ''}-${rule?.max ?? ''} 之间`
+    };
+  }
+  return { valid: true, value, message: '' };
+}
+
+function validatePlanTarget(kind, rawValue) {
+  const rule = kind === 'readTarget'
+    ? LEARNING_TARGET_RULES.readTarget
+    : { min: 0, max: LEARNING_TARGET_RULES.wordTarget.max, label: '词汇目标' };
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < rule.min || value > rule.max) {
+    return { valid: false, value: null, message: `${rule.label}必须在 ${rule.min}-${rule.max} 之间` };
+  }
+  return { valid: true, value, message: '' };
+}
+
+function setLearningTargetError(message = '') {
+  const error = $('#learningTargetError');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = !message;
 }
 
 async function fetchJsonWithTimeout(url, options, timeoutMs, timeoutMessage) {
@@ -713,6 +748,14 @@ function loadState() {
     return base;
   }
   const st = { ...base, ...raw, settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) } };
+  st.settings.readTarget = Math.min(
+    LEARNING_TARGET_RULES.readTarget.max,
+    Math.max(LEARNING_TARGET_RULES.readTarget.min, Number(st.settings.readTarget) || DEFAULT_SETTINGS.readTarget)
+  );
+  st.settings.wordTarget = Math.min(
+    LEARNING_TARGET_RULES.wordTarget.max,
+    Math.max(LEARNING_TARGET_RULES.wordTarget.min, Number(st.settings.wordTarget) || DEFAULT_SETTINGS.wordTarget)
+  );
   st.marks = st.marks && typeof st.marks === 'object' && !Array.isArray(st.marks)
     ? Object.fromEntries(Object.entries(st.marks).map(([articleId, marks]) => [
         articleId,
@@ -1725,7 +1768,6 @@ function setRead(v, auto) {
   if (v && !was) {
     S.read[cur.id].reviewCount = S.read[cur.id].reviewCount || 0;
     recordArticleEvent('article-read', cur.id, { source: 'reader' });
-    S.today.read += 1;
     touchDay();
     if (auto) toast('已读完一遍 · 计入今日进度');
   }
@@ -1867,7 +1909,13 @@ function filteredArticles() {
     return true;
   }).sort((a, b) => {
     const mode = S.settings.articleSort || 'date-desc';
+    const titleOrder = String(a.title).localeCompare(String(b.title), 'en', {
+      sensitivity: 'base',
+      numeric: true
+    }) || String(b.date).localeCompare(String(a.date));
     if (mode === 'date-asc') return String(a.date).localeCompare(String(b.date));
+    if (mode === 'title-asc') return titleOrder;
+    if (mode === 'title-desc') return -titleOrder;
     if (mode === 'source-asc') return String(a.source).localeCompare(String(b.source), 'en') || String(b.date).localeCompare(String(a.date));
     if (mode === 'source-desc') return String(b.source).localeCompare(String(a.source), 'en') || String(b.date).localeCompare(String(a.date));
     return String(b.date).localeCompare(String(a.date));
@@ -3257,7 +3305,6 @@ function rateWord(id, score) {
     score,
     S.settings.cmode === 'quiz' ? 'quiz' : 'cards'
   );
-  S.today.words += 1;
   touchDay();
   save();
   renderStats();
@@ -4172,12 +4219,12 @@ function startFlash() {
   const tick = () => {
     if (run !== flashRun) return;
     if (i >= deck.length) { flashPos = 0; toast('闪现结束'); renderCards(); return; }
-    flashPos = i;
-    const it = deck[i];
+    const currentIndex = i;
+    flashPos = currentIndex;
+    const it = deck[currentIndex];
     stage.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center">
         <div class="flash-word">${esc(it.v.w)}</div>
         <div class="fc-ipa">${esc(it.v.ipa || '')}</div>
-        <div class="hint" style="margin-top:14px">${i + 1} / ${deck.length}</div>
       </div>`;
     stage.insertAdjacentHTML('beforeend', '<button class="btn ghost" id="btnFlashStop">停止闪现</button>');
     flashRevealTimer = setTimeout(() => {
@@ -4187,11 +4234,11 @@ function startFlash() {
             <div class="zh" style="font-size:26px">${esc(it.v.zh)}</div>
             <div class="en" style="margin-top:6px">${esc(it.v.w)} ${esc(it.v.ipa || '')}</div>
           </div>
-          <div class="hint" style="margin-top:14px">${i + 1} / ${deck.length}</div>
+          <div class="hint flash-position" style="margin-top:14px">${currentIndex + 1} / ${deck.length}</div>
         </div>`;
       stage.insertAdjacentHTML('beforeend', '<button class="btn ghost" id="btnFlashStop">停止闪现</button>');
     }, 1100);
-    i++;
+    i = currentIndex + 1;
     flashTimer = setTimeout(tick, 2000);
   };
   tick();
@@ -5884,7 +5931,7 @@ function renderExportAnalysisSummary(list = selectedArticles(), analysis = selec
 }
 
 function renderArchive() {
-  const readIds = Object.keys(S.read).filter(id => S.read[id].done);
+  const readIds = ARTICLES.filter(article => isRead(article.id)).map(article => article.id);
   const wIds = Object.keys(S.words);
   const due = wIds.filter(id => (S.words[id].due || 0) <= Date.now()).length;
   const marks = Object.values(S.marks).reduce((n, l) => n + l.length, 0);
@@ -6796,7 +6843,7 @@ function restoreArticleUserData(snapshotId) {
 
 /* ================= 统计 / 目标 ================= */
 function renderStats() {
-  const readN = Object.keys(S.read).filter(id => S.read[id].done).length;
+  const readN = ARTICLES.filter(article => isRead(article.id)).length;
   const entries = activeVocabularyEntries();
   $('#statArticles').textContent = readN;
   $('#statWords').textContent = entries.length;
@@ -6814,6 +6861,12 @@ function renderStats() {
 function renderGoal() {
   const rt = S.settings.readTarget || 1;
   const wt = S.settings.wordTarget || 12;
+  const todaySummary = LearningEvents.summaryForDay(S, todayStr());
+  S.today = {
+    date: todayStr(),
+    read: todaySummary.readCount,
+    words: todaySummary.words.length
+  };
   $('#goalRead').textContent = Math.min(S.today.read, 99);
   $('#goalReadTarget').textContent = rt;
   $('#goalWords').textContent = S.today.words;
@@ -6968,8 +7021,8 @@ function renderPlanDay(summary) {
     || '<p class="empty-tip compact">当天还没有已学习单词</p>';
   body.innerHTML = `
     <div class="plan-targets">
-      <label><span>精读目标</span><input type="number" min="1" max="20" value="${summary.plan.readTarget}" data-plan-target="readTarget"></label>
-      <label><span>词汇目标</span><input type="number" min="0" max="500" value="${summary.plan.wordTarget}" data-plan-target="wordTarget"></label>
+      <label><span>精读目标</span><input type="number" min="1" max="10" value="${summary.plan.readTarget}" data-plan-target="readTarget"></label>
+      <label><span>词汇目标</span><input type="number" min="0" max="200" value="${summary.plan.wordTarget}" data-plan-target="wordTarget"></label>
       <div class="plan-target-state">
         <span class="${summary.targets.readCompleted ? 'done' : ''}">文章 ${summary.readCount}/${summary.plan.readTarget}</span>
         <span class="${summary.targets.wordsCompleted ? 'done' : ''}">单词 ${summary.words.length}/${summary.plan.wordTarget}</span>
@@ -7003,7 +7056,7 @@ function renderPlanDay(summary) {
       <h3>备注</h3>
       <textarea class="plan-note" data-plan-note maxlength="500" placeholder="记录当天计划或复盘">${esc(summary.plan.note)}</textarea>
     </section>`;
-  body.dataset.planAddMode = 'read';
+  body.dataset.planMode = 'read';
 }
 
 function renderHeatmap() {
@@ -7217,13 +7270,17 @@ function wirePlan() {
     const modeButton = event.target.closest('[data-plan-add-mode]');
     if (modeButton) {
       $$('#planModeSeg button').forEach(button => button.classList.toggle('on', button === modeButton));
-      $('#planDayBody').dataset.planAddMode = modeButton.dataset.planAddMode;
+      $('#planDayBody').dataset.planMode = modeButton.dataset.planAddMode;
       return;
     }
     if (event.target.closest('#btnAddPlanItem')) {
       const articleId = $('#planArticleSelect')?.value || '';
       if (!articleId) return toast('请先选择文章');
-      addPlanItem(planSelectedDate, articleId, $('#planDayBody').dataset.planAddMode || 'read');
+      const mode = $('#planDayBody').dataset.planMode || 'read';
+      const existed = (S.studyPlans[planSelectedDate]?.items || []).some(item =>
+        item.articleId === articleId && item.mode === mode);
+      addPlanItem(planSelectedDate, articleId, mode);
+      toast(existed ? '该文章已在当天计划中' : '已加入学习计划');
       return;
     }
     const remove = event.target.closest('[data-remove-plan-item]');
@@ -7240,7 +7297,15 @@ function wirePlan() {
   root?.addEventListener('change', (event) => {
     const target = event.target.closest('[data-plan-target]');
     if (target) {
-      saveDayPlan(planSelectedDate, { [target.dataset.planTarget]: Number(target.value) });
+      const result = validatePlanTarget(target.dataset.planTarget, target.value);
+      target.setCustomValidity(result.message);
+      target.classList.toggle('invalid', !result.valid);
+      if (!result.valid) {
+        toast(result.message);
+        return;
+      }
+      target.setCustomValidity('');
+      saveDayPlan(planSelectedDate, { [target.dataset.planTarget]: result.value });
       return;
     }
     const note = event.target.closest('[data-plan-note]');
@@ -7368,10 +7433,24 @@ function wireSettings() {
   $('#editGoal').addEventListener('click', openLearningSettings);
 
   $('#setReadTarget').addEventListener('change', (e) => {
-    S.settings.readTarget = Math.max(1, +e.target.value || 1); save(); renderGoal();
+    const result = validateLearningTarget('readTarget', e.target.value);
+    e.target.setCustomValidity(result.message);
+    e.target.classList.toggle('invalid', !result.valid);
+    setLearningTargetError(result.message);
+    if (!result.valid) return;
+    S.settings.readTarget = result.value;
+    save();
+    renderGoal();
   });
   $('#setWordTarget').addEventListener('change', (e) => {
-    S.settings.wordTarget = Math.max(5, +e.target.value || 12); save(); renderGoal();
+    const result = validateLearningTarget('wordTarget', e.target.value);
+    e.target.setCustomValidity(result.message);
+    e.target.classList.toggle('invalid', !result.valid);
+    setLearningTargetError(result.message);
+    if (!result.valid) return;
+    S.settings.wordTarget = result.value;
+    save();
+    renderGoal();
   });
   $('#setVocabDetail').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
@@ -7518,6 +7597,11 @@ function wireSettings() {
 function openLearningSettings() {
   $('#setReadTarget').value = S.settings.readTarget;
   $('#setWordTarget').value = S.settings.wordTarget;
+  $('#setReadTarget').setCustomValidity('');
+  $('#setWordTarget').setCustomValidity('');
+  $('#setReadTarget').classList.remove('invalid');
+  $('#setWordTarget').classList.remove('invalid');
+  setLearningTargetError('');
   $('#setVocabFocus').value = S.settings.vocabFocus || 'balanced';
   $$('#setVocabDetail button').forEach(b => b.classList.toggle('on', b.dataset.detail === (S.settings.vocabDetail || 'detail')));
   $('#settingsModal').hidden = false;

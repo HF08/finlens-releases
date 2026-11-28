@@ -1,6 +1,6 @@
 {
   "name": "finlens",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "FinLens 财经外刊精读、词汇复习与知识工作台",
   "author": "FINLENS",
@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "node server/server.mjs",
-    "test": "node tests/server-embed.mjs && node tests/brand-icon.mjs && node tests/desktop-data-migration.mjs && node tests/legacy-backup-restore.mjs && node tests/desktop-updater.mjs && node tests/learning-events.mjs && node tests/task-center.mjs && node tests/public-vocab-focus.mjs && node tests/task-center-ui.mjs && node tests/learning-calendar.mjs && node tests/vocab-export.mjs && node tests/mind-map.mjs && node tests/verify.mjs && node tests/feedback.mjs && node tests/feedback-v2.mjs && node tests/focus-analysis-and-forms.mjs && node tests/export-archive.mjs && node tests/term-highlighting.mjs && node tests/ai-data-management.mjs && node tests/classification-research.mjs && node tests/knowledge-card-verification.mjs && node tests/category-revalidation.mjs && node tests/build-ecdict.mjs && node tests/dictionary.mjs && node tests/article-management.mjs && node tests/reset.mjs",
+    "test": "node tests/server-embed.mjs && node tests/brand-icon.mjs && node tests/desktop-data-migration.mjs && node tests/legacy-backup-restore.mjs && node tests/desktop-updater.mjs && node tests/learning-events.mjs && node tests/task-center.mjs && node tests/public-vocab-focus.mjs && node tests/task-center-ui.mjs && node tests/learning-calendar.mjs && node tests/vocab-export.mjs && node tests/mind-map.mjs && node tests/article-sort.mjs && node tests/verify.mjs && node tests/feedback.mjs && node tests/feedback-v2.mjs && node tests/focus-analysis-and-forms.mjs && node tests/export-archive.mjs && node tests/term-highlighting.mjs && node tests/ai-data-management.mjs && node tests/classification-research.mjs && node tests/knowledge-card-verification.mjs && node tests/category-revalidation.mjs && node tests/build-ecdict.mjs && node tests/dictionary.mjs && node tests/article-management.mjs && node tests/reset.mjs",
     "test:github": "node tests/github-import.mjs",
     "test:live": "node tests/live-resources.mjs",
     "test:dictionary": "node tests/build-ecdict.mjs && node tests/dictionary.mjs",
