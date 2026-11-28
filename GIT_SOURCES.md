@@ -8,7 +8,7 @@
 
 | 项目 | 可见性 | 使用方式 |
 | --- | --- | --- |
-| [HF08/finlens](https://github.com/HF08/finlens) | 私有 | FinLens 私有主项目。公开仓库以私有提交 `fc8863f` 为同步基线，移除四六级功能、词表和入口后发布；本次公开清理提交为 `41acb14`。 |
+| [HF08/finlens](https://github.com/HF08/finlens) | 私有 | FinLens 私有主项目。公开仓库以私有提交 `f139776` 为同步基线，移除四六级功能、词表和入口后发布；本次公开清理提交为 `779a5d6`。 |
 | [HF08/finlens-releases](https://github.com/HF08/finlens-releases) | 公开 | 当前公开源码与 Windows 发布资产仓库。 |
 
 ## 拉取或派生使用
