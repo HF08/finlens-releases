@@ -270,10 +270,98 @@
         events: summary.events.length,
         words: summary.words.length,
         articles: summary.readCount + summary.reviewCount,
+        articleRead: summary.readCount,
+        articleReview: summary.reviewCount,
+        wordLearned: summary.learnedWords.length,
+        wordReviewed: summary.reviewedWords.length,
+        targetCompleted: summary.completed,
         legacy: summary.legacyCount > 0
       });
     }
     return cells;
+  }
+
+  function weeklyActivity(state, endDate = dateKey(), weeks = 12) {
+    const normalizedEnd = validDateKey(endDate) ? endDate : dateKey();
+    const count = Math.max(1, Math.min(52, Number(weeks) || 12));
+    const end = dateFromKey(normalizedEnd) || new Date();
+    const latestWeekStart = shiftDateKey(normalizedEnd, -((end.getDay() + 6) % 7));
+    const firstWeekStart = shiftDateKey(latestWeekStart, -(count - 1) * 7);
+    const result = [];
+    for (let weekIndex = 0; weekIndex < count; weekIndex += 1) {
+      const weekStart = shiftDateKey(firstWeekStart, weekIndex * 7);
+      const weekEnd = shiftDateKey(weekStart, 6);
+      const totals = {
+        articleRead: 0,
+        articleReview: 0,
+        wordLearned: 0,
+        wordReviewed: 0,
+        activeDays: 0,
+        targetDays: 0
+      };
+      for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+        const summary = summaryForDay(state, shiftDateKey(weekStart, dayIndex));
+        totals.articleRead += summary.readCount;
+        totals.articleReview += summary.reviewCount;
+        totals.wordLearned += summary.learnedWords.length;
+        totals.wordReviewed += summary.reviewedWords.length;
+        if (summary.events.length || summary.legacyCount) totals.activeDays += 1;
+        if (summary.completed) totals.targetDays += 1;
+      }
+      result.push({
+        weekStart,
+        weekEnd,
+        isCurrent: weekStart === latestWeekStart,
+        ...totals
+      });
+    }
+    return result;
+  }
+
+  function activeRateSeries(state, endDate = dateKey(), days = 30, windowDays = 7) {
+    const normalizedEnd = validDateKey(endDate) ? endDate : dateKey();
+    const count = Math.max(1, Math.min(365, Number(days) || 30));
+    const windowSize = Math.max(1, Math.min(30, Number(windowDays) || 7));
+    const firstDate = shiftDateKey(normalizedEnd, -(count - 1));
+    const cache = new Map();
+    const summaryAt = (date) => {
+      if (!cache.has(date)) cache.set(date, summaryForDay(state, date));
+      return cache.get(date);
+    };
+    const result = [];
+    for (let index = 0; index < count; index += 1) {
+      const date = shiftDateKey(firstDate, index);
+      const daySummary = summaryAt(date);
+      const totals = {
+        activeDays: 0,
+        targetDays: 0,
+        articleRead: 0,
+        articleReview: 0,
+        wordLearned: 0,
+        wordReviewed: 0
+      };
+      for (let offset = 0; offset < windowSize; offset += 1) {
+        const summary = summaryAt(shiftDateKey(date, -(windowSize - 1) + offset));
+        if (summary.events.length || summary.legacyCount) totals.activeDays += 1;
+        if (summary.completed) totals.targetDays += 1;
+        totals.articleRead += summary.readCount;
+        totals.articleReview += summary.reviewCount;
+        totals.wordLearned += summary.learnedWords.length;
+        totals.wordReviewed += summary.reviewedWords.length;
+      }
+      result.push({
+        date,
+        windowStart: shiftDateKey(date, -(windowSize - 1)),
+        windowEnd: date,
+        rate: totals.activeDays / windowSize,
+        dayActive: daySummary.events.length > 0 || daySummary.legacyCount > 0,
+        targetCompleted: daySummary.completed,
+        dayArticles: daySummary.readCount + daySummary.reviewCount,
+        dayWords: daySummary.words.length,
+        ...totals
+      });
+    }
+    return result;
   }
 
   function todayWords(state, date = dateKey()) {
@@ -291,6 +379,8 @@
     addEvent,
     summaryForDay,
     heatmap,
+    weeklyActivity,
+    activeRateSeries,
     todayWords
   };
 });

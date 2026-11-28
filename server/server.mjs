@@ -32,7 +32,8 @@ const PORT = Number(process.env.PORT || 8787);
 const KEY = process.env.OPENAI_API_KEY || '';
 const DAY_MS = 86400000;
 const FETCH_TIMEOUT_MS = 15000;
-const RESEARCH_TIMEOUT_MS = 8000;
+const RESEARCH_TIMEOUT_MS = 15000;
+const MODEL_REQUEST_TIMEOUT_MS = 180000;
 const GDELT_API_BASE = process.env.GDELT_API_BASE || 'https://api.gdeltproject.org/api/v2/doc/doc';
 const CROSSREF_API_BASE = process.env.CROSSREF_API_BASE || 'https://api.crossref.org/works';
 const TAVILY_API_URL = process.env.TAVILY_API_URL || 'https://api.tavily.com/search';
@@ -1025,6 +1026,31 @@ function mergeAnnotationResults(results, fallbackTitle) {
 }
 
 const KNOWLEDGE_CATEGORY_VALUES = new Set(['finance', 'background', 'method']);
+const METHOD_EVIDENCE_PATTERNS = [
+  /analyz|analys|assess|evaluate|estimate|forecast|predict|project|simulate|compare|measure|value|decision|scenario|risk|分析|估计|预测|评估|比较|计量|模拟|决策|情景|风险|估值|核查|检查|判断|识别|追踪|筛选|排序|测算|换算|调查|验证|归因|区分/,
+  /assum|theory|theoretical|distribution|correlation|parameter|functional form|model specification|rule|initial condition|environment|network|假设|理论|概率分布|相关性|参数|函数关系|模型设定|规则|初始条件|环境|网络|口径|边界|限制|门槛|窗口|样本|误差|偏差|约束|可比性|季节因子|折算/,
+  /input|data|variable|parameter|exposure|scenario|sample|initial condition|输入|数据|变量|参数|暴露|情景|样本|初始条件|对象|序列|指标|票数|余额|收入|成本|价格|时间|金额|库存|来源|文本|问卷|行业|家庭|资产|负债|销量|销售额/,
+  /transform|process|estimate|simulat|calculat|comput|regress|discount|project|transmission|time series|monte carlo|training|optimization|equation|iterat|interaction|计算|估计|模拟|回归|折现|传导|处理|训练|优化|方程|迭代|交互|运行|比较|划分|排序|映射|汇总|拆解|调整|剔除|核查|检查|检验|追踪|筛选|预测|控制|区分|交叉验证|换算|反推|评估|判断|考察|定位|识别|补充/,
+  /output|result|forecast|prediction|projection|confidence interval|\bvar\b|expected loss|estimate|capital adequacy|输出|结果|预测|置信区间|预期损失|资本充足率|估计值|占比|概率|结论|差异|变化|趋势|质量|分数|判断|解释|决策|溢价|价格|收益|增长|下降|排名|分位|风险|回报|季调值|指标|表现/,
+  /boundary|limitation|uncertain|validation|backtest|out.of.sample|error|condition|invalid|失效|边界|不确定性|校验|验证|样本外|误差|偏差|噪音|口径|样本|可能|不能|覆盖|范围|限制|假设|风险/
+];
+
+function hasCompleteMethodProcedureEvidence(card = {}) {
+  const methodSteps = Array.isArray(card.methodSteps) ? card.methodSteps.filter(Boolean) : [];
+  const cardType = String(card.cardType || '').trim().toLowerCase();
+  if (cardType !== 'method' || methodSteps.length < 2) return false;
+  const methodDescription = [
+    card.one,
+    card.body,
+    card.classificationReason,
+    card.categoryReason,
+    ...methodSteps,
+    ...(Array.isArray(card.scenarios) ? card.scenarios : [])
+  ].filter(Boolean).join(' ').toLowerCase();
+  const methodEvidence = METHOD_EVIDENCE_PATTERNS.map(pattern => pattern.test(methodDescription));
+  return methodEvidence.filter(Boolean).length >= 5 &&
+    methodEvidence[0] && methodEvidence[2] && methodEvidence[3] && methodEvidence[4];
+}
 
 function classifyKnowledgeCategory(card = {}) {
   const term = normalizeArticleText(`${card.term || ''} ${card.en || ''}`).toLowerCase();
@@ -1045,6 +1071,103 @@ function classifyKnowledgeCategory(card = {}) {
   const methodSteps = Array.isArray(card.methodSteps) ? card.methodSteps.filter(Boolean) : [];
   const cardType = String(card.cardType || '').trim().toLowerCase();
   const relativeValuationProcedurePattern = /\b(relative valuation|relative pricing|comparables valuation|comparable company analysis)\b|相对估值|相对定价|可比公司估值|可比估值/;
+  const hasCompleteMethodProcedure = hasCompleteMethodProcedureEvidence(card);
+  if (relativeValuationProcedurePattern.test(term)) {
+    return hasCompleteMethodProcedure
+      ? {
+          category: 'finance',
+          categories: ['finance', 'method'],
+          reason: '对象属于金融估值，同时描述包含可比对象、口径统一、倍数比较、风险检查和适用边界，作为金融内容交叉归入分析方法。',
+          confidence: 0.97
+        }
+      : {
+          category: 'finance',
+          categories: ['finance'],
+          reason: '对象直接比较可比公司、估值倍数或相对价格，主要解释资产相对贵贱；描述不足以还原完整分析程序，因此不交叉归入方法。',
+          confidence: 0.95
+        };
+  }
+  const curatedCategoryRules = [
+    {
+      pattern: /\b(tight labour markets? and wage growth)\b|劳动力市场紧张.*工资增长/,
+      category: 'background',
+      categories: ['background'],
+      reason: '对象描述劳动市场紧张和工资增长，属于宏观经济与就业背景，不构成金融工具或分析方法。',
+      confidence: 0.9
+    },
+    {
+      pattern: /\b(basel committee|g-sib assessment|financial stability board updated g-sib list)\b|巴塞尔委员会|G-SIB评估|金融稳定理事会.*G-SIB名单/,
+      category: 'background',
+      categories: ['background', 'finance'],
+      reason: '对象是银行监管机构、系统重要性识别框架或监管名单，背景制度为主，金融监管关系交叉。',
+      confidence: 0.94
+    },
+    {
+      pattern: /\b(differentiated portfolio|management statement|manufacturing yield|year.on.year growth|percentage point|year.to.date|ytd|growth outlook)\b|差异化产品组合|管理层声明|制造良率|同比增长|百分点|年初至今|增长展望/,
+      category: 'background',
+      categories: ['background'],
+      reason: '对象是企业经营、制造、统计口径或治理信息，不是金融资产、融资安排或完整分析程序。',
+      confidence: 0.9
+    },
+    {
+      pattern: /\b(agenda setting|ad hoc policymaking)\b|议程设置|临时性政策制定/,
+      category: 'background',
+      categories: ['background'],
+      reason: '对象是政治传播、治理或政策制定方式，属于制度背景，不是可复现分析方法。',
+      confidence: 0.93
+    },
+    {
+      pattern: /\b(refinancing|treasury yields?|premarket trading|price target|drawdown|selloff|paper gains|broad.based repricing of assets|initial public offering|ipo|series [a-z] round|startup fundraising|new funding|startup financing)\b|再融资|国债收益率|盘前交易|目标价|回撤|抛售|纸面收益|资产广泛重定价|首次公开募股|上市融资|融资轮|创业公司融资|新增融资/,
+      category: 'finance',
+      categories: ['finance'],
+      reason: '对象涉及融资、证券交易、资产价格、收益率、估值或市场表现，属于金融活动与市场指标。',
+      confidence: 0.95
+    },
+    {
+      pattern: /\b(automated clearing house|ach|payment and settlement services?|check clearing|financial network)\b|自动清算所|支付与结算服务|支票清算|金融网络/,
+      category: 'finance',
+      categories: ['finance', 'background'],
+      reason: '对象是支付、清算、结算或金融网络机制，金融基础设施为主，制度背景交叉。',
+      confidence: 0.94
+    },
+    {
+      pattern: /\b(systemic risk|financial contagion|risk exposure|financial system|financial commitment|backstop|guarantee|too big to fail|beneficial ownership|form 4 filing)\b|系统性风险|金融传染|风险敞口|金融体系|财务承诺|担保|大到不能倒|受益所有权|Form 4/,
+      category: 'finance',
+      categories: ['finance', 'background'],
+      reason: '对象直接描述金融风险、信用支持、证券持有或金融稳定机制，金融关系为主，法律监管背景交叉。',
+      confidence: 0.94
+    },
+    {
+      pattern: /\b(ebitda|loss per share|earnings guidance|revenue guidance|consensus estimate|analyst consensus estimate|market consensus expectation|analyst note|valuation)\b|每股亏损|业绩指引|营收指引|一致预期|分析师一致预期|市场一致预期|分析师报告|估值/,
+      category: 'finance',
+      categories: ['finance'],
+      reason: '对象是财务业绩、估值、证券研究或市场预期指标，属于金融市场与公司财务信息。',
+      confidence: 0.94
+    },
+    {
+      pattern: /\b(lean formalisation|lean formal verification|formal verification|llm.assisted literature mining)\b|Lean形式化验证|形式化验证|大语言模型辅助文献挖掘/,
+      category: 'method',
+      categories: ['method'],
+      reason: '对象具有可复现的输入、转换或验证步骤、输出和适用边界，属于分析方法。',
+      confidence: 0.95
+    },
+    {
+      pattern: /\bpeer review\b|同行评审|科学主张验证/,
+      category: 'method',
+      categories: ['method'],
+      reason: '同行评审具有明确的送审、独立评估、反馈修正和编辑决策步骤，属于验证方法。',
+      confidence: 0.93
+    }
+  ];
+  for (const rule of curatedCategoryRules) {
+    if (!rule.pattern.test(term)) continue;
+    return {
+      category: rule.category,
+      categories: rule.categories,
+      reason: rule.reason,
+      confidence: rule.confidence
+    };
+  }
   const revenueManagementFinancePattern = /\b(airline revenue management|revenue management|yield management)\b|航空.*收益管理|航线.*收益管理|收益管理/;
   if (revenueManagementFinancePattern.test(term)) {
     return {
@@ -1077,19 +1200,8 @@ function classifyKnowledgeCategory(card = {}) {
     card.classificationReason,
     card.categoryReason
   ].filter(Boolean).join(' ').toLowerCase();
-  const methodEvidence = [
-    /analyz|analys|assess|evaluate|estimate|forecast|predict|project|simulate|compare|measure|value|decision|scenario|risk|分析|估计|预测|评估|比较|计量|模拟|决策|情景|风险|估值|核查|检查|判断|识别|追踪|筛选|排序|测算|换算|调查|验证|归因|区分/.test(methodDescription),
-    /assum|theory|theoretical|distribution|correlation|parameter|functional form|model specification|rule|initial condition|environment|network|假设|理论|概率分布|相关性|参数|函数关系|模型设定|规则|初始条件|环境|网络|口径|边界|限制|门槛|窗口|样本|误差|偏差|约束|可比性|季节因子|折算/.test(methodDescription),
-    /input|data|variable|parameter|exposure|scenario|sample|initial condition|输入|数据|变量|参数|暴露|情景|样本|初始条件|对象|序列|指标|票数|余额|收入|成本|价格|时间|金额|库存|来源|文本|问卷|行业|家庭|资产|负债|销量|销售额/.test(methodDescription),
-    /transform|process|estimate|simulat|calculat|comput|regress|discount|project|transmission|time series|monte carlo|training|optimization|equation|iterat|interaction|计算|估计|模拟|回归|折现|传导|处理|训练|优化|方程|迭代|交互|运行|比较|划分|排序|映射|汇总|拆解|调整|剔除|核查|检查|检验|追踪|筛选|预测|控制|区分|交叉验证|换算|反推|评估|判断|考察|定位|识别|补充/.test(methodDescription),
-    /output|result|forecast|prediction|projection|confidence interval|\bvar\b|expected loss|estimate|capital adequacy|输出|结果|预测|置信区间|预期损失|资本充足率|估计值|占比|概率|结论|差异|变化|趋势|质量|分数|判断|解释|决策|溢价|价格|收益|增长|下降|排名|分位|风险|回报|季调值|指标|表现/.test(methodDescription),
-    /boundary|limitation|uncertain|validation|backtest|out.of.sample|error|condition|invalid|失效|边界|不确定性|校验|验证|样本外|误差|偏差|噪音|口径|样本|可能|不能|覆盖|范围|限制|假设|风险/.test(methodDescription)
-  ];
+  const methodEvidence = METHOD_EVIDENCE_PATTERNS.map(pattern => pattern.test(methodDescription));
   const methodEvidenceScore = methodEvidence.filter(Boolean).length;
-  const hasCompleteMethodProcedure = cardType === 'method' &&
-    methodSteps.length >= 2 &&
-    methodEvidenceScore >= 5 &&
-    methodEvidence[0] && methodEvidence[2] && methodEvidence[3] && methodEvidence[4];
   const methodPattern = /\b(stress test(?:ing)?|scenario analys(?:is|es)|scenario testing|event study|regression analys(?:is|es)|regression model|econometrics?|econometric (?:analysis|model)|dcf|discounted cash flow|value at risk|var|sensitivity analys(?:is|es)|monte carlo (?:simulation|model)|factor model|capm|option pricing model|game theory|ratio analys(?:is|es)|duration analys(?:is|es)|comparative statics|cost.benefit analys(?:is|es)|break.even analys(?:is|es)|valuation model|valuation framework|risk management framework|enterprise risk management|regulatory risk management|compliance risk management|forecasting method|machine learning analysis|statistical learning method|statistical method|quantitative method|decision analysis|multi.criteria analysis|seasonal adjustment|data surprise analysis|job.growth breadth analysis|incremental vote.margin comparison|vote.margin analysis|founder.market fit|venture capital team evaluation|source completeness screening|stated preference survey|wealth quantile analysis|opportunity cost and time allocation|attribution in reported speech|upc.based retail sales tracking|retail sales tracking)\b|基于UPC的零售销售追踪|零售销售追踪/i;
   const normalizedTermNames = [card.term, card.en]
     .map(value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
@@ -1100,21 +1212,6 @@ function classifyKnowledgeCategory(card = {}) {
   const hasSupportedMethodContext = hasCompleteMethodProcedure;
   const capexCashFlowPattern = /\b(?:capital expenditure|capital expenditures|capex)\b.*\b(?:cash ?flow|ocf|fcf|free cash flow|operating cash flow|financing gap|liquidity|debt|credit)\b|\b(?:cash ?flow|ocf|fcf)\b.*\b(?:capital expenditure|capital expenditures|capex)\b|资本支出.*现金流|资本开支.*现金流/;
   const purchasingPowerPattern = /\bpurchasing power(?!\s+parity)\b|购买力(?!平价)/;
-  if (relativeValuationProcedurePattern.test(term)) {
-    return hasCompleteMethodProcedure
-      ? {
-          category: 'finance',
-          categories: ['finance', 'method'],
-          reason: '对象属于金融估值，同时描述包含可比对象、口径统一、倍数比较、风险检查和适用边界，作为金融内容交叉归入分析方法。',
-          confidence: 0.97
-        }
-      : {
-          category: 'finance',
-          categories: ['finance'],
-          reason: '对象直接比较可比公司、估值倍数或相对价格，主要解释资产相对贵贱；描述不足以还原完整分析程序，因此不交叉归入方法。',
-          confidence: 0.95
-        };
-  }
   if (capexCashFlowPattern.test(term) && hasCompleteMethodProcedure) {
     return {
       category: 'finance',
@@ -1296,6 +1393,51 @@ function classifyKnowledgeCategory(card = {}) {
       confidence: 0.98
     };
   }
+  const centralBankFacilityPattern = /\b(discount window|discount rate|primary credit rate|federal funds (?:target )?range|federal funds rate|standing lending facility|central bank liquidity facility)\b|贴现窗口|贴现率|联邦基金利率(?:目标区间)?|常备借贷便利|央行流动性工具/;
+  if (centralBankFacilityPattern.test(term)) {
+    return {
+      category: 'finance',
+      categories: ['finance'],
+      reason: '对象是央行流动性工具、贴现窗口或政策利率区间，属于货币市场与货币政策操作，归入金融术语。',
+      confidence: 0.97
+    };
+  }
+  const developmentFinancePattern = /\b(public sector loans?.*(?:grants?|technical assistance)|co-financing|special funds?|foreign direct investment|fdi)\b|公共部门贷款.*(?:赠款|技术援助)|联合融资|共同融资|特别基金|专项资金池|外商直接投资|外国直接投资/;
+  if (developmentFinancePattern.test(term)) {
+    return {
+      category: 'finance',
+      categories: ['finance', 'background'],
+      reason: '对象涉及跨境投资、联合融资、优惠资金或开发性融资工具，金融关系为主，发展政策背景交叉。',
+      confidence: 0.95
+    };
+  }
+  const financingStructurePattern = /\b(financing source diversification|higher loss.absorbency requirement|loss.absorbency requirement|total loss.absorbing capacity|tlac)\b|融资来源多元化|损失吸收能力要求|总损失吸收能力/;
+  if (financingStructurePattern.test(term)) {
+    return {
+      category: 'finance',
+      categories: ['finance', 'background'],
+      reason: '对象描述融资来源、资本缓冲或损失吸收能力，属于金融机构资本与融资结构，金融关系为主。',
+      confidence: 0.96
+    };
+  }
+  const predictionMarketPattern = /\b(prediction markets?|event contracts?)\b|预测市场|事件合约/;
+  if (predictionMarketPattern.test(term)) {
+    return {
+      category: 'finance',
+      categories: ['finance', 'background'],
+      reason: '对象涉及事件合约与预测市场价格，属于金融市场机制，同时带有公共信息和监管背景。',
+      confidence: 0.96
+    };
+  }
+  const derivativesMetricPattern = /\b(notional (?:trading )?volume|notional amount|funding payments?|funding rates?|open interest|perpetual futures?)\b|名义(?:交易)?量|资金支付|资金费率|未平仓合约|持仓量|永续合约/;
+  if (derivativesMetricPattern.test(term)) {
+    return {
+      category: 'finance',
+      categories: ['finance'],
+      reason: '对象是衍生品交易量、资金支付、持仓量或永续合约机制，属于金融工具与市场指标。',
+      confidence: 0.96
+    };
+  }
   const marketCorrectionPattern = /\b(?:stock|equity)?\s*market correction\b|股市修正|市场修正/;
   if (marketCorrectionPattern.test(term)) {
     const nonFinancialMarket = /\b(housing|property|real estate|commodity|industrial|inventory|supply chain)\b|房地产|楼市|商品市场|产业|库存/.test(`${term} ${context}`);
@@ -1449,7 +1591,8 @@ function classifyKnowledgeCategory(card = {}) {
     reason: modelCategory
       ? `模型原分类为 ${modelCategory}，但术语本体和描述缺少足够的金融对象或完整方法程序证据；按默认背景层处理。`
       : '未识别到明确的金融工具或分析方法特征，保守归入背景层。',
-    confidence: modelCategory ? 0.7 : 0.5
+    confidence: modelCategory ? 0.7 : 0.5,
+    fallback: !modelCategory
   };
 }
 
@@ -1491,6 +1634,11 @@ function enrichKnowledgeCard(card) {
   };
 }
 
+function modelRequestTimeoutMs(body = {}) {
+  const override = Number(body?.modelTimeoutMs || process.env.FINLENS_MODEL_TIMEOUT_MS);
+  return Math.max(1000, override > 0 ? override : MODEL_REQUEST_TIMEOUT_MS);
+}
+
 async function requestLLMJson(body, userPrompt, systemPrompt = FINANCE_SKILL) {
   const { baseUrl, model, apiKey } = await resolveModelRequest(body);
   const key = apiKey;
@@ -1508,7 +1656,7 @@ async function requestLLMJson(body, userPrompt, systemPrompt = FINANCE_SKILL) {
         { role: 'user', content: userPrompt }
       ]
     }),
-    signal: AbortSignal.timeout(60000)
+    signal: AbortSignal.timeout(modelRequestTimeoutMs(body))
   });
   if (!resp.ok) throw new Error(`上游返回 ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
   const data = await resp.json();
@@ -1539,7 +1687,7 @@ function modelQualityRejects(reason) {
   return /(不连贯|碎片|导航|登录页|错误页|不是文章|非文章|无法形成文章|缺少完整文章)/i.test(text);
 }
 
-async function annotate(body, onProgress = () => {}) {
+async function annotate(body, onProgress = () => {}, llmRequest = requestLLMJson) {
   const {
     paragraphs,
     title,
@@ -1577,7 +1725,7 @@ async function annotate(body, onProgress = () => {}) {
       message: `分段翻译与质量分析 ${index + 1}/${chunks.length}`
     });
     try {
-      results.push(await requestLLMJson(body, buildPrompt({
+      results.push(await llmRequest(body, buildPrompt({
         title,
         paragraphs: chunk,
         vocabFocus,
@@ -1586,8 +1734,18 @@ async function annotate(body, onProgress = () => {}) {
         originalEnglishTitle
       })));
     } catch (error) {
-      for (const paragraph of chunk) {
-        results.push(await requestLLMJson(body, buildCompactPrompt(title, paragraph, vocabFocus, {
+      onProgress({
+        step: 'analyze',
+        percent: Math.min(80, start + 1),
+        message: `主分段请求未完成，改为逐段重试 ${index + 1}/${chunks.length}`
+      });
+      for (let paragraphIndex = 0; paragraphIndex < chunk.length; paragraphIndex += 1) {
+        onProgress({
+          step: 'analyze',
+          percent: Math.min(80, start + 2 + paragraphIndex),
+          message: `逐段重试 ${index + 1}/${chunks.length} · ${paragraphIndex + 1}/${chunk.length}`
+        });
+        results.push(await llmRequest(body, buildCompactPrompt(title, chunk[paragraphIndex], vocabFocus, {
           sourceKind,
           originalEnglishTitle
         })));
@@ -2076,10 +2234,14 @@ function knowledgeTermNeedles(card = {}) {
 
 function knowledgeCategoryEvidence(card, classification, currentCategories, contentWarnings = []) {
   const sentences = knowledgeEvidenceSentences(card);
+  const primarySentences = sentences.filter(item => item.source === 'one' || item.source === 'body');
+  const modelAnalysis = sentences
+    .filter(item => item.source === 'model')
+    .slice(0, 3);
   const needles = knowledgeTermNeedles(card);
-  const negative = sentences.filter(item => KNOWLEDGE_NEGATIVE_EVIDENCE_PATTERN.test(item.text));
+  const negative = primarySentences.filter(item => KNOWLEDGE_NEGATIVE_EVIDENCE_PATTERN.test(item.text));
   const negativeTexts = new Set(negative.map(item => item.text));
-  const positive = sentences.filter(item => !negativeTexts.has(item.text));
+  const positive = primarySentences.filter(item => !negativeTexts.has(item.text));
   const termPattern = needles.length
     ? new RegExp(needles.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i')
     : null;
@@ -2123,12 +2285,201 @@ function knowledgeCategoryEvidence(card, classification, currentCategories, cont
     main,
     cross,
     negative: negative.slice(0, 3),
+    model: modelAnalysis,
+    research: [],
     sufficient,
     mainReason,
     crossReason,
     negativeReason,
-    sourcePolicy: 'research-entry-points-only'
+    sourcePolicy: 'primary-text-with-model-and-research-corroboration'
   };
+}
+
+function researchCategoryEvidence(research) {
+  return (research?.sources || [])
+    .filter(source => source?.verified)
+    .map((source, index) => ({
+      source: 'research',
+      sourceIndex: index + 1,
+      text: [
+        source.title || '',
+        source.description || ''
+      ].filter(Boolean).join('：').slice(0, 560),
+      title: String(source.title || ''),
+      url: String(source.url || ''),
+      publisher: String(source.publisher || source.author || source.provider || ''),
+      kind: String(source.kind || ''),
+      verified: true
+    }))
+    .filter(item => item.text)
+    .slice(0, 6);
+}
+
+function evidenceCategorySupport(classification, evidence) {
+  const modelStatus = evidence.modelStatus || (evidence.modelCategory ? 'success' : 'model-unavailable');
+  const modelCategory = KNOWLEDGE_CATEGORY_VALUES.has(evidence.modelCategory)
+    ? evidence.modelCategory
+    : '';
+  const modelAgrees = Boolean(modelCategory && modelCategory === classification.category);
+  const modelConflict = Boolean(
+    modelStatus === 'success' &&
+    modelCategory &&
+    modelCategory !== classification.category
+  );
+  const selectedIndexes = new Set(
+    (Array.isArray(evidence.modelSourceIndexes) ? evidence.modelSourceIndexes : [])
+      .map(Number)
+      .filter(index => Number.isInteger(index) && index >= 1)
+  );
+  const seenUrls = new Set();
+  const sourceVotes = [];
+  const rejectedSources = [];
+  for (const item of Array.isArray(evidence.research) ? evidence.research : []) {
+    const sourceIndex = Number(item?.sourceIndex);
+    if (!selectedIndexes.has(sourceIndex)) continue;
+    const url = validHttpUrl(item?.url);
+    if (!item?.verified || !url) {
+      rejectedSources.push({ sourceIndex, reason: '来源未验证或 URL 无效', title: item?.title || '' });
+      continue;
+    }
+    if (seenUrls.has(url.href)) {
+      rejectedSources.push({ sourceIndex, reason: '重复 URL', title: item?.title || '' });
+      continue;
+    }
+    seenUrls.add(url.href);
+    sourceVotes.push({
+      sourceIndex,
+      title: String(item.title || ''),
+      url: url.href,
+      publisher: String(item.publisher || ''),
+      text: String(item.text || '').slice(0, 560)
+    });
+  }
+  for (const sourceIndex of selectedIndexes) {
+    if (!(evidence.research || []).some(item => Number(item?.sourceIndex) === sourceIndex)) {
+      rejectedSources.push({ sourceIndex, reason: '来源序号不存在' });
+    }
+  }
+  const status = modelStatus === 'failed'
+    ? 'model-failed'
+    : !modelCategory
+      ? 'model-unavailable'
+      : modelConflict
+        ? 'model-conflict'
+        : sourceVotes.length < 2
+          ? 'source-insufficient'
+          : 'sufficient';
+  return {
+    model: modelAgrees,
+    modelCategory,
+    modelConflict,
+    modelError: String(evidence.modelError || ''),
+    research: sourceVotes.length,
+    votes: sourceVotes.length,
+    sourceVotes,
+    rejectedSources,
+    sufficient: status === 'sufficient',
+    status,
+    sourcePolicy: 'model-selected-verified-sources'
+  };
+}
+
+function revalidationConfidence(classification, evidence, classifierChanged, contentWarnings) {
+  const support = evidence.independent || { votes: 0, sufficient: false };
+  const ruleConfidence = Number(classification.confidence) || 0.5;
+  let confidence;
+  if (support.sufficient) {
+    confidence = Math.max(ruleConfidence, Number(evidence.modelConfidence) || 0, 0.78) +
+      Math.min(0.08, support.votes * 0.025);
+    if (evidence.sufficient) confidence += 0.02;
+  } else {
+    confidence = Math.min(ruleConfidence, 0.7);
+    if (!evidence.sufficient) confidence = Math.min(confidence, 0.55);
+  }
+  if (classifierChanged && !support.sufficient) confidence = Math.min(confidence, 0.6);
+  if (evidence.negative.length) confidence -= Math.min(0.06, evidence.negative.length * 0.02);
+  if (contentWarnings.length) confidence -= Math.min(0.12, contentWarnings.length * 0.04);
+  return Math.round(Math.max(0.1, Math.min(0.99, confidence)) * 100) / 100;
+}
+
+async function analyzeCategoryWithResearch(card, research, requestBody = {}) {
+  const hasCredential = requestBody.apiKey || requestBody.localCredentialId ||
+    requestBody.ccSwitchProviderId || KEY;
+  if (!hasCredential) {
+    return {
+      status: 'unavailable',
+      error: '未配置模型凭据',
+      category: '',
+      categories: [],
+      confidence: 0,
+      reason: '',
+      evidenceSourceIndexes: []
+    };
+  }
+  const sources = (research?.sources || []).slice(0, 6);
+  const sourceText = sources.length
+    ? sources.map((source, index) =>
+        `[${index + 1}] ${source.title || ''} | ${source.publisher || source.author || source.provider || ''} | ${source.description || ''}`)
+        .join('\n')
+    : '(本次没有可用的检索摘要)';
+  try {
+    const result = await requestLLMJson(requestBody, `你是独立的知识分类核验器。只根据术语名称和检索摘要判断领域分类。
+不得读取、推测或引用卡片正文；卡片正文不是你的证据来源。
+
+输出严格 JSON：
+{"category":"finance|background|method","categories":["finance"],"confidence":0.0,"reason":"分类理由","evidenceSourceIndexes":[1,2]}
+
+规则：
+1. 主解释对象是货币、信用、金融资产/合约、金融机构、融资、资本、估值、保险、投资组合、风险定价或金融市场机制时，主分类为 finance。
+2. 政治、法律、监管制度、产业、技术、历史、社会或组织背景为主时，为 background；只有同时独立涉及金融关系时才交叉 finance。
+3. 具有可复现的输入、步骤、输出和边界的分析程序才是 method。
+4. 检索摘要不足时降低 confidence，并在 reason 中明确证据不足；不得编造来源。
+5. evidenceSourceIndexes 只填写实际支持结论的来源序号。
+
+术语：${card.en || card.term || ''}
+中文：${card.term || ''}
+检索摘要：
+${sourceText}`);
+    const category = KNOWLEDGE_CATEGORY_VALUES.has(result?.category) ? result.category : '';
+    if (!category) {
+      return {
+        status: 'failed',
+        error: '模型未返回有效主分类',
+        category: '',
+        categories: [],
+        confidence: 0,
+        reason: String(result?.reason || '').slice(0, 600),
+        evidenceSourceIndexes: []
+      };
+    }
+    const categories = [...new Set([
+      category,
+      ...(Array.isArray(result.categories) ? result.categories : [])
+        .filter(item => KNOWLEDGE_CATEGORY_VALUES.has(item))
+    ])].slice(0, 2);
+    return {
+      status: 'success',
+      error: '',
+      category,
+      categories,
+      confidence: Math.max(0.1, Math.min(0.99, Number(result.confidence) || 0.6)),
+      reason: String(result.reason || '').trim().slice(0, 600),
+      evidenceSourceIndexes: (Array.isArray(result.evidenceSourceIndexes) ? result.evidenceSourceIndexes : [])
+        .map(Number)
+        .filter(index => Number.isInteger(index) && index >= 1 && index <= sources.length)
+        .slice(0, 6)
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      error: String(error?.message || error || '模型核验失败').slice(0, 500),
+      category: '',
+      categories: [],
+      confidence: 0,
+      reason: '',
+      evidenceSourceIndexes: []
+    };
+  }
 }
 
 async function revalidateKnowledgeCategories(cards, online = true, requestBody = {}) {
@@ -2146,27 +2497,78 @@ async function revalidateKnowledgeCategories(cards, online = true, requestBody =
       ? card.categories.filter(item => KNOWLEDGE_CATEGORY_VALUES.has(item))
       : currentCategory ? [currentCategory] : [];
     const contentWarnings = knowledgeContentMismatch(card);
-    const classifierChanged = Boolean(currentCategory) && (
-      currentCategory !== classification.category ||
-      JSON.stringify([...currentCategories].sort()) !== JSON.stringify([...classification.categories].sort())
-    );
     const evidence = knowledgeCategoryEvidence(card, classification, currentCategories, contentWarnings);
-    const changed = classifierChanged && evidence.sufficient;
-    const recommendation = contentWarnings.length || (changed && classification.confidence < 0.85)
-      ? 'review'
-      : changed
-        ? 'change'
-        : 'keep';
-    const suggestedCategory = changed || !currentCategory ? classification.category : currentCategory;
-    const suggestedCategories = changed || !currentCategory ? classification.categories : currentCategories;
-    const categoryConfidence = classifierChanged && !evidence.sufficient
-      ? Math.min(classification.confidence, 0.65)
-      : classification.confidence;
-    const shouldResearch = online && (classifierChanged || classification.confidence < 0.85 || contentWarnings.length);
+    evidence.cardEvidencePolicy = evidence.sourcePolicy;
+    evidence.ruleCandidate = {
+      category: classification.category,
+      categories: classification.categories,
+      confidence: classification.confidence,
+      reason: classification.reason
+    };
+    const shouldResearch = online;
     let research = null;
     if (shouldResearch) {
       research = await researchKnowledgeSources(card, true);
+      evidence.research = researchCategoryEvidence(research);
     }
+    const modelAnalysis = await analyzeCategoryWithResearch(card, research, requestBody);
+    if (modelAnalysis.status === 'success') {
+      evidence.model = [{
+        source: 'model',
+        text: `模型分析：${modelAnalysis.reason}`
+      }];
+      evidence.modelCategory = modelAnalysis.category;
+      evidence.modelCategories = modelAnalysis.categories;
+      evidence.modelConfidence = modelAnalysis.confidence;
+      evidence.modelSourceIndexes = modelAnalysis.evidenceSourceIndexes;
+      evidence.modelStatus = 'success';
+      evidence.modelError = '';
+    } else {
+      evidence.model = [];
+      evidence.modelCategory = '';
+      evidence.modelCategories = [];
+      evidence.modelConfidence = 0;
+      evidence.modelSourceIndexes = [];
+      evidence.modelStatus = modelAnalysis.status;
+      evidence.modelError = modelAnalysis.error;
+    }
+    evidence.independent = evidenceCategorySupport(classification, evidence);
+    evidence.independentSufficient = evidence.independent.sufficient;
+    evidence.sourcePolicy = evidence.independent.sourcePolicy;
+    const selectedSourceIndexes = new Set(evidence.independent.sourceVotes.map(item => item.sourceIndex));
+    evidence.research.forEach(item => {
+      item.selected = selectedSourceIndexes.has(item.sourceIndex);
+    });
+    evidence.classificationMode = evidence.independent.sufficient
+      ? 'independent-model-selected-sources'
+      : evidence.independent.status;
+    const independentCategory = modelAnalysis.status === 'success' ? modelAnalysis.category : '';
+    const independentCategories = modelAnalysis.status === 'success' ? modelAnalysis.categories : [];
+    const currentSignature = JSON.stringify([...currentCategories].sort());
+    const independentSignature = JSON.stringify([...independentCategories].sort());
+    const categoryDiffers = Boolean(independentCategory) && (
+      !currentCategory ||
+      currentCategory !== independentCategory ||
+      currentSignature !== independentSignature
+    );
+    const changed = evidence.independent.sufficient && categoryDiffers;
+    const recommendation = !evidence.independent.sufficient
+      ? 'review'
+      : contentWarnings.length ? 'review' : changed ? 'change' : 'keep';
+    const suggestedCategory = modelAnalysis.status === 'success'
+      ? modelAnalysis.category
+      : classification.category;
+    const suggestedCategories = modelAnalysis.status === 'success'
+      ? modelAnalysis.categories
+      : classification.categories;
+    const categoryConfidence = evidence.independent.sufficient
+      ? revalidationConfidence(
+          classification,
+          evidence,
+          changed,
+          contentWarnings
+        )
+      : null;
     const sourceMap = new Map();
     classificationSourcesFor(card, classification)
       .forEach(source => sourceMap.set(source.url, { ...source, verified: false, sourceType: 'registry' }));
@@ -3568,7 +3970,12 @@ export {
   buildAnalysisPrompt,
   buildCompactAnalysisPrompt,
   buildMindMapPrompt,
-  normalizeMindMap
+  normalizeMindMap,
+  annotate,
+  modelRequestTimeoutMs,
+  classifyKnowledgeCategory,
+  evidenceCategorySupport,
+  revalidationConfidence
 };
 
 const isDirectRun = process.argv[1] &&

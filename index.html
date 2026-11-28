@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FinLens · 财经外刊学习工作台</title>
 <link rel="icon" type="image/png" href="src/assets/finlens-icon.png">
-<link rel="stylesheet" href="src/styles.css?v=20261125-public-workspace-v50">
+<link rel="stylesheet" href="src/styles.css?v=20261127-independent-sources-v59">
 </head>
 <body>
 
@@ -129,6 +129,9 @@
   <symbol id="i-brain-circuit" viewBox="0 0 24 24">
     <path d="M12 5a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V8a3 3 0 0 0-3-3Z"/>
     <path d="M9 8H6a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h3M15 8h3a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-3M12 2v3M12 19v3"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24">
+    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>
   </symbol>
 </svg>
 
@@ -365,6 +368,34 @@
           <div class="heatmap-scroll">
             <div class="heatmap-grid" id="learningHeatmap"></div>
           </div>
+          <p class="plan-chart-caption" id="learningHeatmapSummary"></p>
+        </section>
+
+        <section class="plan-chart-band" id="learningActivityBand">
+          <div class="plan-section-head">
+            <div>
+              <h2>近 12 周学习构成</h2>
+              <p>四类活动分别计数，独立纵轴</p>
+            </div>
+            <div class="plan-chart-key">
+              <span><i class="article"></i>文章</span>
+              <span><i class="word"></i>单词</span>
+            </div>
+          </div>
+          <div class="activity-chart" id="learningActivityBars"></div>
+          <p class="plan-chart-caption" id="learningActivityDetail">选择任意周柱查看明细。</p>
+        </section>
+
+        <section class="plan-chart-band" id="learningActiveRateBand">
+          <div class="plan-section-head">
+            <div>
+              <h2>近 30 天学习持续性</h2>
+              <p>7 日活跃率 · 固定 0% 到 100%</p>
+            </div>
+            <div class="active-rate-summary" id="learningActiveRateSummary"></div>
+          </div>
+          <div class="active-rate-chart" id="learningActiveRateChart"></div>
+          <p class="plan-chart-caption" id="learningActiveRateDetail">选择日期点查看当日与 7 日窗口明细。</p>
         </section>
       </div>
     </section>
@@ -399,15 +430,22 @@
     <section class="view" id="view-knowledge">
       <div class="kb-wrap">
         <div class="kb-toolbar">
-          <input class="search" id="kbSearch" placeholder="搜索概念，如「期限溢价」「抵押品」…">
-          <div class="seg seg-sm" id="kbCategorySeg">
-            <button data-kcat="all" class="on">全部知识</button>
-            <button data-kcat="finance">金融术语</button>
-            <button data-kcat="background">背景层</button>
-            <button data-kcat="method">分析方法</button>
+          <div class="kb-toolbar-row">
+            <input class="search" id="kbSearch" placeholder="搜索概念，如「期限溢价」「抵押品」…">
+            <div class="seg seg-sm" id="kbCategorySeg">
+              <button data-kcat="all" class="on">全部知识</button>
+              <button data-kcat="finance">金融术语</button>
+              <button data-kcat="background">背景层</button>
+              <button data-kcat="method">分析方法</button>
+            </div>
+            <button class="mini-btn" id="btnRevalidateKnowledgeCategories" type="button"><svg class="ui-icon"><use href="#i-badge-check"></use></svg><span>核验分类</span></button>
+            <div class="seg" id="kbTopicSeg"></div>
           </div>
-          <button class="mini-btn" id="btnRevalidateKnowledgeCategories" type="button"><svg class="ui-icon"><use href="#i-badge-check"></use></svg><span>核验分类</span></button>
-          <div class="seg" id="kbTopicSeg"></div>
+          <div class="kb-toolbar-row kb-toolbar-secondary">
+            <select class="sel" id="kbArticleFilter" aria-label="按文章筛选知识卡">
+              <option value="all">全部文章</option>
+            </select>
+          </div>
         </div>
         <div class="kb-grid" id="kbGrid"></div>
       </div>
@@ -438,9 +476,59 @@
         <div class="modal-scroll">
           <section class="set-sec">
             <h4>核验范围</h4>
-            <div class="seg seg-sm" id="revalidationScopeSeg">
-              <button type="button" data-revalidate-scope="filtered" class="on">当前筛选</button>
-              <button type="button" data-revalidate-scope="all">全部知识卡</button>
+            <div class="revalidation-scope-row">
+              <div class="seg seg-sm" id="revalidationScopeSeg">
+                <button type="button" data-revalidate-scope="filtered" class="on">当前筛选</button>
+                <button type="button" data-revalidate-scope="all">全部知识卡</button>
+              </div>
+              <button class="mini-btn" id="btnToggleRevalidationFilters" type="button">
+                <svg class="ui-icon"><use href="#i-sliders"></use></svg>
+                <span>筛选</span>
+                <span class="revalidation-filter-count" id="revalidationFilterCount" hidden>0</span>
+              </button>
+            </div>
+            <p class="revalidation-scope-summary" id="revalidationScopeSummary"></p>
+            <div class="revalidation-filter-panel" id="revalidationFilterPanel" hidden>
+              <div class="revalidation-filter-grid">
+                <div class="revalidation-filter-field">
+                  <span>知识分类</span>
+                  <div class="seg seg-sm" id="revalidationKnowledgeCategorySeg">
+                    <button type="button" data-rkcat="all" class="on">全部</button>
+                    <button type="button" data-rkcat="finance">金融术语</button>
+                    <button type="button" data-rkcat="background">背景层</button>
+                    <button type="button" data-rkcat="method">分析方法</button>
+                  </div>
+                </div>
+                <div class="revalidation-filter-field">
+                  <span>概念类型</span>
+                  <div class="seg seg-sm" id="revalidationCardTypeSeg">
+                    <button type="button" data-rcardtype="all" class="on">全部</button>
+                    <button type="button" data-rcardtype="concept">概念类</button>
+                    <button type="button" data-rcardtype="phenomenon">现象类</button>
+                    <button type="button" data-rcardtype="mechanism">机制类</button>
+                    <button type="button" data-rcardtype="method">方法类</button>
+                  </div>
+                </div>
+                <label class="revalidation-filter-field">
+                  <span>文章搜索</span>
+                  <input class="sel" id="revalidationArticleSearch" type="search" placeholder="输入文章标题、来源或摘要">
+                </label>
+                <label class="revalidation-filter-field">
+                  <span>选择文章</span>
+                  <select class="sel" id="revalidationArticleSelect">
+                    <option value="all">全部文章</option>
+                  </select>
+                </label>
+                <label class="revalidation-filter-field">
+                  <span>文章类别</span>
+                  <select class="sel" id="revalidationTopicSelect">
+                    <option value="all">全部类别</option>
+                  </select>
+                </label>
+              </div>
+              <div class="revalidation-filter-actions">
+                <button class="mini-btn" id="btnResetRevalidationFilters" type="button">重置筛选</button>
+              </div>
             </div>
             <label class="chk big revalidation-online">
               <input type="checkbox" id="revalidationOnline" checked>
@@ -632,7 +720,7 @@
             <option value="finance">金融术语优先</option>
           </select>
         </div>
-        <p class="hint">切换侧重会同步更新当前文章的词汇标注与精读解析：IELTS / TOEFL 更强调句法、搭配、改写和推荐表达，金融侧重更强调术语机制、估值与风险推理。原文、译文、知识卡、用户标注和问答记录保持不变；内置文章与导入文章均适用。简略模式只显示音标、词性和中文释义；详细模式增加英文释义、词形转换与例句。</p>
+        <p class="hint">切换侧重会同步更新当前文章的词汇标注与精读解析：IELTS/TOEFL 更强调句法、搭配、改写和推荐表达，金融侧重更强调术语机制、估值与风险推理。原文、译文、知识卡、用户标注和问答记录保持不变；内置文章与导入文章均适用。简略模式只显示音标、词性和中文释义；详细模式增加英文释义、词形转换与例句。</p>
         <p class="hint" id="vocabFocusStatus"></p>
       </section>
 
@@ -794,7 +882,12 @@
         <button type="button" data-task-filter="history">历史</button>
         <button type="button" data-task-filter="all">全部</button>
       </div>
-      <span id="taskCenterSummary"></span>
+      <div class="task-center-toolbar-actions">
+        <span id="taskCenterSummary"></span>
+        <button class="mini-btn" id="btnClearInvalidTasks" type="button">
+          <svg class="ui-icon"><use href="#i-trash"></use></svg><span>清理无效任务</span>
+        </button>
+      </div>
     </div>
     <div class="modal-scroll">
       <div class="task-center-list" id="taskCenterList"></div>
@@ -1099,6 +1192,6 @@
 <script src="data/verified-knowledge-corrections.js"></script>
 <script src="src/learning-events.js"></script>
 <script src="src/task-center.js"></script>
-<script src="src/app.js?v=20261125-public-workspace-v50"></script>
+<script src="src/app.js?v=20261127-independent-sources-v59"></script>
 </body>
 </html>

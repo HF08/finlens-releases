@@ -103,6 +103,41 @@ try {
     }
   });
   assert.equal(timeoutMessage, 'request timeout fixture');
+  const annotationTimeout = await page.evaluate(() => {
+    const original = window.__FINLENS_TASK_STALL_TIMEOUT_MS__;
+    window.__FINLENS_TASK_STALL_TIMEOUT_MS__ = undefined;
+    const defaultMs = annotationStallTimeoutMs();
+    window.__FINLENS_TASK_STALL_TIMEOUT_MS__ = 123456;
+    const overrideMs = annotationStallTimeoutMs();
+    window.__FINLENS_TASK_STALL_TIMEOUT_MS__ = original;
+    return { defaultMs, overrideMs };
+  });
+  assert.equal(annotationTimeout.defaultMs, 1800000);
+  assert.equal(annotationTimeout.overrideMs, 123456);
+  const recoveryAdvice = await page.evaluate(() => ({
+    timeout: annotationRecoveryFor('The operation was aborted due to timeout'),
+    unknown: annotationRecoveryFor('upstream returned an unusual empty payload'),
+    focus: taskRecoveryFor('focus-batch', 'The operation was aborted due to timeout')
+  }));
+  assert.match(recoveryAdvice.timeout.join(' '), /超时/);
+  assert.doesNotMatch(recoveryAdvice.timeout.join(' '), /检查模型与网络/);
+  assert.doesNotMatch(recoveryAdvice.unknown.join(' '), /检查模型与网络/);
+  assert.match(recoveryAdvice.focus.join(' '), /减少批量文章数量/);
+
+  await page.evaluate(() => {
+    const extra = startTask('generic', { title: '另一个失败任务' });
+    failTaskState(extra, 'fixture failure');
+  });
+  await page.locator('#taskCenterModal [data-task-filter="failed"]').click();
+  const failedBeforeDelete = await page.locator('#taskCenterModal .task-item.failed').count();
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#taskCenterModal [data-task-delete]').first().click();
+  const failedAfterDelete = await page.locator('#taskCenterModal .task-item.failed').count();
+  assert.equal(failedAfterDelete, failedBeforeDelete - 1);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#btnClearInvalidTasks').click();
+  assert.equal(await page.locator('#taskCenterModal .task-item.failed').count(), 0);
+  assert.equal(await page.locator('#btnClearInvalidTasks').isDisabled(), true);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileLayout = await page.evaluate(() => {

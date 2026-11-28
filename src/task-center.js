@@ -120,6 +120,21 @@
     });
   }
 
+  function deleteTask(state, id) {
+    ensureState(state);
+    const index = state.tasks.findIndex(task => task.id === id);
+    if (index < 0) return false;
+    state.tasks.splice(index, 1);
+    return true;
+  }
+
+  function clearInvalidTasks(state) {
+    ensureState(state);
+    const before = state.tasks.length;
+    state.tasks = state.tasks.filter(task => !['failed', 'cancelled'].includes(task.status));
+    return before - state.tasks.length;
+  }
+
   function listTasks(state, filter = 'all') {
     ensureState(state);
     const tasks = [...state.tasks].sort((left, right) => right.updatedAt - left.updatedAt);
@@ -155,6 +170,8 @@
     finishTask,
     failTask,
     cancelTask,
+    deleteTask,
+    clearInvalidTasks,
     listTasks,
     taskSummary
   };

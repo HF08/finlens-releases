@@ -43,7 +43,7 @@ fixture.prepare(`
   'to increase suddenly and strongly\\nan upward movement',
   'v:100/n:100',
   'p:surged/d:surged/i:surging/3:surges',
-  'ky toefl ielts gre',
+  'cet4 cet6 ky toefl ielts gre',
   4122,
   3196
 );

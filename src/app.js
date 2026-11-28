@@ -12,7 +12,7 @@ const DAY_MS = 86400000;
 const MAX_CUSTOM_ARTICLES = 100;
 const CUSTOM_ARTICLE_RECOVERY_VERSION = 1;
 const CRAWL_REQUEST_TIMEOUT_MS = 60000;
-const TASK_STALL_TIMEOUT_MS = 90000;
+const TASK_STALL_TIMEOUT_MS = 1800000;
 const LearningEvents = window.FinLensLearningEvents;
 const TaskDomain = window.FinLensTaskCenter;
 const KNOWLEDGE_CATEGORIES = {
@@ -153,6 +153,7 @@ let aiDataFilter = { source: 'all', q: '', articleId: '', knowledgeId: '' };
 const expandedAISessions = new Set();
 const expandedInlineAIHistory = new Set();
 let categoryRevalidationState = null;
+let lastCategoryRevalidationSession = null;
 let activeContentFixReview = null;
 let taskCenterFilter = 'running';
 let planCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -259,6 +260,11 @@ async function fetchJsonWithTimeout(url, options, timeoutMs, timeoutMessage) {
   }
 }
 
+function annotationStallTimeoutMs() {
+  const override = Number(window.__FINLENS_TASK_STALL_TIMEOUT_MS__);
+  return Math.max(1000, override > 0 ? override : TASK_STALL_TIMEOUT_MS);
+}
+
 const AI_PROGRESS_STEPS = ['clean', 'connect', 'analyze', 'enrich', 'save'];
 const TASK_TYPE_LABELS = {
   annotation: '文章标注',
@@ -344,13 +350,42 @@ function recoverInterruptedTasks() {
 }
 
 function annotationRecoveryFor(message) {
-  if (/JSON|json|格式|finish=|parse/i.test(String(message || ''))) {
+  const text = String(message || '');
+  if (/timeout|timed out|aborted|超时/i.test(text)) {
+    return ['任务等待模型或远端服务超时', '直接重试原任务', '连续超时再检查模型服务和网络'];
+  }
+  if (/rate.?limit|quota|429|额度|频率/i.test(text)) {
+    return ['模型服务达到频率或额度限制', '等待配额恢复后重试', '检查服务商用量与计费设置'];
+  }
+  if (/fetch failed|network|ENOTFOUND|ECONN|连接失败|网络不可达/i.test(text)) {
+    return ['远端连接失败', '检查网络或稍后重试', '确认目标服务当前可访问'];
+  }
+  if (/正文|质量|段落|内容不足|缺少段落|不是文章/i.test(text)) {
+    return ['正文抓取或质量校验未通过', '重新抓取正文', '改用粘贴正文或上传文档'];
+  }
+  if (/JSON|json|格式|finish=|parse/i.test(text)) {
     return ['重试标注', '切换到支持稳定 JSON 输出的模型', '测试模型连接后再试'];
   }
-  if (/key|密钥|credential|认证|401|403/i.test(String(message || ''))) {
+  if (/key|密钥|credential|认证|401|403/i.test(text)) {
     return ['在模型与抓取设置中配置 Key', '测试模型连接', '重新运行标注'];
   }
-  return ['检查模型与网络连接', '稍后重试', '可先保存原文，配置模型后再标注'];
+  return [
+    `先查看具体错误：${text.slice(0, 80) || '任务未返回错误详情'}`,
+    '直接重试原任务',
+    '只有重复出现相同连接错误时再检查网络'
+  ];
+}
+
+function taskRecoveryFor(type, message) {
+  const recovery = annotationRecoveryFor(message);
+  if (type === 'focus-batch') return [...recovery, '必要时减少批量文章数量'];
+  if (type === 'knowledge-revalidation') return [...recovery, '必要时缩小核验范围'];
+  if (type === 'mind-map') return [...recovery, '可重新生成思维导图'];
+  if (type === 'ai-summary') return [...recovery, '可重新生成文章总结'];
+  if (type === 'crawl' && /feed|rss|atom|订阅源|fetch failed/i.test(String(message || ''))) {
+    return ['检查具体订阅源是否可访问', '停用失效订阅源后重试', '保留其他可用订阅源'];
+  }
+  return recovery.slice(0, 3);
 }
 
 function renderTaskCenter() {
@@ -401,8 +436,10 @@ function renderTaskCenterModal() {
   if (!list) return;
   const summary = taskCenterSummary();
   const tasks = TaskDomain.listTasks(S, taskCenterFilter);
+  const invalidCount = (S.tasks || []).filter(task => ['failed', 'cancelled'].includes(task.status)).length;
   $('#taskCenterSummary').textContent =
     `进行中 ${summary.running} · 失败 ${summary.failed} · 已完成 ${summary.success}`;
+  $('#btnClearInvalidTasks').disabled = invalidCount === 0;
   $$('#taskCenterFilters button').forEach(button =>
     button.classList.toggle('on', button.dataset.taskFilter === taskCenterFilter));
   list.innerHTML = tasks.map(task => {
@@ -410,6 +447,14 @@ function renderTaskCenterModal() {
     const recovery = task.recovery.length
       ? `<ul class="task-recovery">${task.recovery.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`
       : '';
+    const actions = [
+      task.status === 'failed'
+        ? `<button class="mini-btn" type="button" data-task-retry="${esc(task.id)}">${icon('rotate')}<span>重试</span></button>`
+        : '',
+      ['failed', 'cancelled'].includes(task.status)
+        ? `<button class="mini-btn task-delete-btn" type="button" data-task-delete="${esc(task.id)}" title="删除这条无效任务记录">${icon('trash')}<span>删除</span></button>`
+        : ''
+    ].filter(Boolean).join('');
     return `<article class="task-item ${meta.className}" data-task-id="${esc(task.id)}">
       <div class="task-item-head">
         <span class="task-type">${esc(TASK_TYPE_LABELS[task.type] || task.type)}</span>
@@ -422,7 +467,7 @@ function renderTaskCenterModal() {
       <div class="task-item-meta"><span>${task.progress}%</span><span>${esc(task.message || task.step || '')}</span></div>
       ${task.error ? `<p class="task-error">${esc(task.error)}</p>` : ''}
       ${recovery}
-      ${task.status === 'failed' ? `<button class="mini-btn" type="button" data-task-retry="${esc(task.id)}">${icon('rotate')}<span>重试</span></button>` : ''}
+      ${actions ? `<div class="task-item-actions">${actions}</div>` : ''}
     </article>`;
   }).join('') || '<div class="empty-tip">当前筛选下没有任务</div>';
 }
@@ -438,6 +483,26 @@ function openTaskCenter(filter = 'running') {
 function closeTaskCenter() {
   const modal = $('#taskCenterModal');
   if (modal) modal.hidden = true;
+}
+
+function deleteTaskRecord(taskId) {
+  const task = S.tasks?.find(item => item.id === taskId);
+  if (!task || !['failed', 'cancelled'].includes(task.status)) return;
+  if (!confirm(`删除失败任务“${task.title}”的记录？文章、学习数据和已有产出不会受影响。`)) return;
+  TaskDomain.deleteTask(S, taskId);
+  save();
+  renderTaskCenter();
+  toast('无效任务记录已删除');
+}
+
+function clearInvalidTaskRecords() {
+  const invalid = (S.tasks || []).filter(task => ['failed', 'cancelled'].includes(task.status));
+  if (!invalid.length) return toast('当前没有可清理的无效任务');
+  if (!confirm(`删除 ${invalid.length} 条失败或已取消的任务记录？文章、学习数据和已有产出不会受影响。`)) return;
+  const removed = TaskDomain.clearInvalidTasks(S);
+  save();
+  renderTaskCenter();
+  toast(`已清理 ${removed} 条无效任务记录`);
 }
 
 function retryTask(task) {
@@ -499,6 +564,15 @@ function wireTaskCenter() {
       renderTaskCenterModal();
       return;
     }
+    if (event.target.closest('#btnClearInvalidTasks')) {
+      clearInvalidTaskRecords();
+      return;
+    }
+    const remove = event.target.closest('[data-task-delete]');
+    if (remove) {
+      deleteTaskRecord(remove.dataset.taskDelete);
+      return;
+    }
     const retry = event.target.closest('[data-task-retry]');
     if (retry) retryTask(S.tasks.find(task => task.id === retry.dataset.taskRetry));
   });
@@ -513,7 +587,7 @@ async function requestAnnotationWithProgress(payload, label = 'AI 标注处理�
     message: '准备标注'
   });
   const controller = new AbortController();
-  const stallTimeoutMs = Math.max(1000, Number(window.__FINLENS_TASK_STALL_TIMEOUT_MS__) || TASK_STALL_TIMEOUT_MS);
+  const stallTimeoutMs = annotationStallTimeoutMs();
   let stallTimer = null;
   let stalled = false;
   const armStallTimer = () => {
@@ -647,13 +721,6 @@ function loadState() {
     : {};
   if (!st.vocabOverrides || typeof st.vocabOverrides !== 'object' || Array.isArray(st.vocabOverrides)) {
     st.vocabOverrides = {};
-  }
-  for (const [articleId, override] of Object.entries(st.vocabOverrides)) {
-    if (!override || typeof override !== 'object' || (override.focus && !VOCAB_FOCUS_VALUES.has(override.focus))) {
-      delete st.vocabOverrides[articleId];
-      continue;
-    }
-    override.vocab = sanitizeVocabList(override.vocab);
   }
   if (!st.reviewSessions || typeof st.reviewSessions !== 'object' || Array.isArray(st.reviewSessions)) {
     st.reviewSessions = {};
@@ -881,6 +948,7 @@ async function boot() {
 
   buildTopicSeg('#topicSeg', 'all', (id) => { filter.topic = id; renderList(); });
   buildTopicSeg('#kbTopicSeg', 'all', (id) => { kb.topic = id; renderKB(); });
+  buildKnowledgeArticleFilter();
   wireNav();
   wireReader();
   wireCards();
@@ -956,7 +1024,7 @@ function switchView(v) {
 
 /* ---------------- 主题筛选器 ---------------- */
 const filter = { topic: 'all', level: 'all', read: 'all', q: '' };
-const kb = { topic: 'all', category: 'all', q: '' };
+const kb = { topic: 'all', article: 'all', category: 'all', q: '' };
 
 function buildTopicSeg(sel, active, onPick) {
   const el = $(sel);
@@ -967,6 +1035,19 @@ function buildTopicSeg(sel, active, onPick) {
     [...el.children].forEach(c => c.classList.toggle('on', c === b));
     onPick(b.dataset.t);
   });
+}
+
+function buildKnowledgeArticleFilter() {
+  const el = $('#kbArticleFilter');
+  const articles = ARTICLES
+    .filter(article => article?.id && article?.knowledge?.length)
+    .slice()
+    .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+  el.innerHTML = '<option value="all">全部文章</option>' + articles
+    .map(article => `<option value="${esc(article.id)}">${esc(article.title)}</option>`)
+    .join('');
+  if (kb.article !== 'all' && !articles.some(article => article.id === kb.article)) kb.article = 'all';
+  el.value = kb.article;
 }
 
 /* ================= 视图 1：阅读台 ================= */
@@ -2226,7 +2307,8 @@ async function generateTutorSummary() {
     renderSide();
     finishTaskState(task, { message: '总结已生成' });
   } catch (e) {
-    failTaskState(task, e.message || '总结生成失败', ['检查模型连接', '稍后重试', '切换到稳定模型']);
+    const message = e.message || '总结生成失败';
+    failTaskState(task, message, taskRecoveryFor('ai-summary', message));
     if (status) {
       status.textContent = e.message || '总结生成失败';
       status.style.color = 'var(--danger)';
@@ -2528,7 +2610,8 @@ async function openMindMap(articleId, { force = false } = {}) {
     renderMindMap(data.mindMap, article);
     finishTaskState(task, { message: '思维导图已生成' });
   } catch (error) {
-    failTaskState(task, error.message || '思维导图生成失败', ['检查模型连接', '重新生成导图', '换用支持稳定 JSON 输出的模型']);
+    const message = error.message || '思维导图生成失败';
+    failTaskState(task, message, taskRecoveryFor('mind-map', message));
     if (activeMindMapArticleId === article.id) {
       $('#mindMapCanvas').innerHTML = `<div class="mind-map-error">${esc(error.message || '思维导图生成失败')}</div>`;
     }
@@ -3788,7 +3871,8 @@ async function generateVocabFocusPreview() {
       renderTaskCenter();
       return;
     }
-    failTaskState(task, error.message || '词汇侧重预览生成失败', ['检查模型连接', '减少批量文章数量后重试', '稍后重新生成预览']);
+    const message = error.message || '词汇侧重预览生成失败';
+    failTaskState(task, message, taskRecoveryFor('focus-batch', message));
     clearVocabFocusPreview(`生成预览失败：${error.message || error}`);
     if (status) status.style.color = 'var(--danger)';
   } finally {
@@ -4279,6 +4363,7 @@ function allKnowledge() {
 function filteredKnowledge() {
   const q = kb.q.trim().toLowerCase();
   return allKnowledge().filter(k => {
+    if (kb.article !== 'all' && k._aid !== kb.article) return false;
     if (kb.topic !== 'all' && k._topic !== kb.topic) return false;
     if (kb.category !== 'all' && !knowledgeCategoriesFor(k).includes(kb.category)) return false;
     if (!q) return true;
@@ -4328,6 +4413,142 @@ function revalidationScopeValue() {
   return $('#revalidationScopeSeg button.on')?.dataset.revalidateScope || 'filtered';
 }
 
+function categoryRevalidationLibraryFilters() {
+  return {
+    category: kb.category || 'all',
+    cardType: 'all',
+    article: kb.article || 'all',
+    topic: kb.topic || 'all',
+    query: kb.q.trim()
+  };
+}
+
+function categoryRevalidationFilterCount(filters = categoryRevalidationState?.filters || {}) {
+  return ['category', 'cardType', 'article', 'topic']
+    .filter(key => filters[key] && filters[key] !== 'all')
+    .length;
+}
+
+function categoryRevalidationArticleCandidates(filters = categoryRevalidationState?.filters || {}) {
+  const query = String(categoryRevalidationState?.articleQuery || '').trim().toLowerCase();
+  return ARTICLES
+    .filter(article => article?.id && article?.knowledge?.length)
+    .filter(article => filters.topic === 'all' || article.topic === filters.topic)
+    .filter(article => !query || [
+      article.title,
+      article.deck,
+      article.source,
+      (TOPICS.find(topic => topic.id === article.topic) || {}).name
+    ].filter(Boolean).join(' ').toLowerCase().includes(query))
+    .slice()
+    .sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'));
+}
+
+function renderCategoryRevalidationArticleOptions() {
+  const state = categoryRevalidationState;
+  const select = $('#revalidationArticleSelect');
+  if (!state || !select) return;
+  const candidates = categoryRevalidationArticleCandidates(state.filters);
+  if (state.filters.article !== 'all' && !candidates.some(article => article.id === state.filters.article)) {
+    const selectedArticle = ARTICLES.find(article => article.id === state.filters.article);
+    if (selectedArticle) candidates.unshift(selectedArticle);
+  }
+  select.innerHTML = '<option value="all">全部文章</option>' + candidates
+    .map(article => `<option value="${esc(article.id)}">${esc(article.title)}</option>`)
+    .join('');
+  select.value = state.filters.article;
+}
+
+function renderCategoryRevalidationFilterControls() {
+  const state = categoryRevalidationState;
+  if (!state) return;
+  const locked = state.running === true;
+  const filters = state.filters;
+  const panel = $('#revalidationFilterPanel');
+  const toggle = $('#btnToggleRevalidationFilters');
+  if (panel) panel.hidden = !state.filterPanelOpen;
+  if (toggle) {
+    toggle.hidden = Boolean(state.target);
+    toggle.classList.toggle('on', state.filterPanelOpen);
+    toggle.setAttribute('aria-expanded', state.filterPanelOpen ? 'true' : 'false');
+  }
+  $$('#revalidationKnowledgeCategorySeg button').forEach(button => {
+    button.classList.toggle('on', button.dataset.rkcat === filters.category);
+    button.disabled = locked;
+  });
+  $$('#revalidationCardTypeSeg button').forEach(button => {
+    button.classList.toggle('on', button.dataset.rcardtype === filters.cardType);
+    button.disabled = locked;
+  });
+  const topicSelect = $('#revalidationTopicSelect');
+  if (topicSelect) {
+    topicSelect.innerHTML = TOPICS
+      .filter(topic => topic.id !== 'all')
+      .map(topic => `<option value="${esc(topic.id)}">${esc(topic.name)}</option>`)
+      .join('');
+    if (!TOPICS.some(topic => topic.id === filters.topic)) filters.topic = 'all';
+    topicSelect.innerHTML = '<option value="all">全部类别</option>' + topicSelect.innerHTML;
+    topicSelect.value = filters.topic;
+    topicSelect.disabled = locked;
+  }
+  const articleSearch = $('#revalidationArticleSearch');
+  if (articleSearch && document.activeElement !== articleSearch) {
+    articleSearch.value = state.articleQuery || '';
+  }
+  if (articleSearch) articleSearch.disabled = locked;
+  renderCategoryRevalidationArticleOptions();
+  const articleSelect = $('#revalidationArticleSelect');
+  if (articleSelect) articleSelect.disabled = locked;
+  const reset = $('#btnResetRevalidationFilters');
+  if (reset) reset.disabled = locked;
+  const count = categoryRevalidationFilterCount(filters);
+  const badge = $('#revalidationFilterCount');
+  if (badge) {
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+  }
+}
+
+function clearCategoryRevalidationResults(message = '筛选已更新，请生成核验预览。') {
+  if (!categoryRevalidationState) return;
+  categoryRevalidationState.results = [];
+  categoryRevalidationState.selected.clear();
+  categoryRevalidationState.error = '';
+  $('#revalidationStatus').textContent = message;
+  $('#revalidationStatus').style.color = 'var(--ink-3)';
+  renderCategoryRevalidationPreview();
+  renderCategoryRevalidationScopeSummary();
+  renderCategoryRevalidationFilterControls();
+}
+
+function renderCategoryRevalidationScopeSummary(scope = revalidationScopeValue()) {
+  const summary = $('#revalidationScopeSummary');
+  if (!summary || !categoryRevalidationState) return;
+  const count = categoryRevalidationCards(scope).length;
+  if (categoryRevalidationState.target) {
+    summary.textContent = `当前知识卡 · ${count} 张`;
+    return;
+  }
+  if (scope === 'all') {
+    summary.textContent = `全部知识卡 · ${count} 张`;
+    return;
+  }
+  const filters = categoryRevalidationState.filters || {};
+  const parts = [];
+  if (filters.article && filters.article !== 'all') {
+    const title = ARTICLES.find(article => article.id === filters.article)?.title;
+    if (title) parts.push(`文章《${title}》`);
+  }
+  if (filters.category && filters.category !== 'all') parts.push(`知识分类：${categoryLabel(filters.category)}`);
+  if (filters.cardType && filters.cardType !== 'all') parts.push(`概念类型：${knowledgeTypeLabel(filters.cardType)}`);
+  if (filters.topic && filters.topic !== 'all') {
+    const topic = TOPICS.find(item => item.id === filters.topic)?.name;
+    if (topic) parts.push(`文章类别：${topic}`);
+  }
+  if (filters.query) parts.push(`搜索：“${filters.query}”`);
+  summary.textContent = `当前筛选：${parts.length ? parts.join(' · ') : '无额外筛选'} · ${count} 张知识卡`;
+}
+
 function renderCategoryRevalidationSources(coverage = KNOWLEDGE_SOURCE_COVERAGE) {
   const container = $('#revalidationSourceCoverage');
   if (!container) return;
@@ -4346,28 +4567,81 @@ function openCategoryRevalidation(options = {}) {
   const target = options.articleId && options.cardId
     ? { articleId: options.articleId, cardId: options.cardId }
     : null;
-  categoryRevalidationState = {
-    scope: 'filtered',
-    online: true,
-    results: [],
-    selected: new Set(),
-    coverage: KNOWLEDGE_SOURCE_COVERAGE,
-    target
-  };
+  if (target) {
+    categoryRevalidationState = {
+      sessionId: `category-revalidation-${Date.now()}`,
+      scope: 'filtered',
+      online: true,
+      results: [],
+      selected: new Set(),
+      coverage: KNOWLEDGE_SOURCE_COVERAGE,
+      target,
+      filters: categoryRevalidationLibraryFilters(),
+      initialFilters: categoryRevalidationLibraryFilters(),
+      articleQuery: '',
+      filterPanelOpen: false,
+      running: false,
+      taskId: '',
+      progress: 0,
+      error: ''
+    };
+  } else if (lastCategoryRevalidationSession?.running || lastCategoryRevalidationSession?.results?.length) {
+    const saved = lastCategoryRevalidationSession;
+    categoryRevalidationState = {
+      ...saved,
+      target: null,
+      selected: new Set(saved.selected || []),
+      filters: { ...(saved.filters || categoryRevalidationLibraryFilters()) },
+      initialFilters: { ...(saved.initialFilters || saved.filters || categoryRevalidationLibraryFilters()) }
+    };
+  } else {
+    const filters = categoryRevalidationLibraryFilters();
+    categoryRevalidationState = {
+      sessionId: `category-revalidation-${Date.now()}`,
+      scope: 'filtered',
+      online: true,
+      results: [],
+      selected: new Set(),
+      coverage: KNOWLEDGE_SOURCE_COVERAGE,
+      target: null,
+      filters,
+      initialFilters: { ...filters },
+      articleQuery: '',
+      filterPanelOpen: false,
+      running: false,
+      taskId: '',
+      progress: 0,
+      error: ''
+    };
+  }
+  if (!target) lastCategoryRevalidationSession = categoryRevalidationState;
   $$('#revalidationScopeSeg button').forEach(button =>
-    button.classList.toggle('on', button.dataset.revalidateScope === 'filtered'));
-  $('#revalidationOnline').checked = true;
-  $('#revalidationStatus').textContent = target
-    ? '当前知识卡核验：生成预览后才会写入分类。'
-    : '生成预览后才会写入分类。';
-  $('#revalidationStatus').style.color = 'var(--ink-3)';
-  $('#revalidationPreview').innerHTML = '<div class="revalidation-empty">选择范围后生成核验预览。</div>';
-  $('#btnApplyCategoryRevalidation').disabled = true;
-  $('#btnRunCategoryRevalidation').disabled = false;
+    button.classList.toggle('on', button.dataset.revalidateScope === (categoryRevalidationState.scope || 'filtered')));
+  $('#revalidationOnline').checked = categoryRevalidationState.online !== false;
+  if (categoryRevalidationState.running) {
+    $('#revalidationStatus').textContent = `后台核验进行中：${categoryRevalidationState.progress || 0}%`;
+    $('#revalidationStatus').style.color = 'var(--ink-3)';
+  } else if (categoryRevalidationState.error) {
+    $('#revalidationStatus').textContent = `上次核验失败：${categoryRevalidationState.error}`;
+    $('#revalidationStatus').style.color = 'var(--danger)';
+  } else if (categoryRevalidationState.results.length) {
+    $('#revalidationStatus').textContent = `已恢复上次核验：${categoryRevalidationState.results.length} 张知识卡。`;
+    $('#revalidationStatus').style.color = 'var(--teal)';
+  } else {
+    $('#revalidationStatus').textContent = target
+      ? '当前知识卡核验：生成预览后才会写入分类。'
+      : '生成预览后才会写入分类。';
+    $('#revalidationStatus').style.color = 'var(--ink-3)';
+  }
+  $('#btnApplyCategoryRevalidation').disabled = categoryRevalidationState.selected.size === 0;
+  $('#btnRunCategoryRevalidation').disabled = categoryRevalidationState.running === true;
   $('#btnUndoCategoryRevalidation').hidden = !(S.knowledgeRevalidationBackups || []).length;
   $('#revalidationScopeSeg').hidden = Boolean(target);
-  renderCategoryRevalidationSources();
+  renderCategoryRevalidationSources(categoryRevalidationState.coverage);
+  renderCategoryRevalidationFilterControls();
+  renderCategoryRevalidationPreview();
   $('#categoryRevalidationModal').hidden = false;
+  renderCategoryRevalidationScopeSummary();
 }
 
 function closeCategoryRevalidation() {
@@ -4406,7 +4680,22 @@ function categoryRevalidationCards(scope = revalidationScopeValue()) {
       match: card.match
     }];
   }
-  return (scope === 'all' ? allKnowledge() : filteredKnowledge()).map(card => ({
+  const filters = categoryRevalidationState?.filters || categoryRevalidationLibraryFilters();
+  const query = String(filters.query || '').trim().toLowerCase();
+  const cards = scope === 'all'
+    ? allKnowledge()
+    : allKnowledge().filter(card => {
+        if (filters.article !== 'all' && card._aid !== filters.article) return false;
+        if (filters.topic !== 'all' && card._topic !== filters.topic) return false;
+        if (filters.category !== 'all' && !knowledgeCategoriesFor(card).includes(filters.category)) return false;
+        if (filters.cardType !== 'all' && (card.cardType || 'concept') !== filters.cardType) return false;
+        if (!query) return true;
+        return [card.term, card.en, card.one, card.body, ...(card.match || [])]
+          .join(' ')
+          .toLowerCase()
+          .includes(query);
+      });
+  return cards.map(card => ({
     id: card.id,
     articleId: card._aid,
     articleTitle: card._title,
@@ -4441,18 +4730,35 @@ function renderCategoryRevalidationPreview() {
     const selected = state.selected.has(`${result.articleId}:${result.cardId}`);
     const evidence = result.evidence || {};
     const recommendation = result.recommendation || (result.changed ? 'change' : 'keep');
+    const independentStatus = evidence.independent?.status ||
+      (evidence.independentSufficient === true ? 'sufficient' : 'source-insufficient');
     const review = result.contentWarnings?.length ||
       result.categoryConfidence < 0.85 ||
-      evidence.sufficient === false ||
+      evidence.independentSufficient !== true ||
       recommendation === 'review';
     const statusClass = review ? 'review' : recommendation === 'change' ? 'changed' : '';
-    const statusText = review
-      ? evidence.sufficient === false ? '证据不足' : '需要人工确认'
-      : recommendation === 'change' ? '建议修改' : '保持不变';
-    const canApply = result.changed && evidence.sufficient !== false;
+    const independentStatusText = {
+      'model-failed': '模型核验失败',
+      'model-unavailable': '模型未执行',
+      'model-conflict': '规则与模型冲突',
+      'source-insufficient': '外部来源不足',
+      sufficient: recommendation === 'change' ? '建议修改' : '分类已确认'
+    }[independentStatus] || '需要人工确认';
+    const statusText = review && evidence.independentSufficient === true
+      ? '需要人工确认'
+      : independentStatusText;
+    const canApply = result.changed && evidence.independentSufficient === true;
+    const confidenceLabel = Number.isFinite(Number(result.categoryConfidence))
+      ? `${Math.round(Number(result.categoryConfidence) * 100)}%`
+      : '无置信度';
+    const evidenceLabel = { one: '一句话', body: '正文', model: '模型分析', research: '检索摘要' };
     const renderEvidence = (items, emptyText) => (items || []).length
-      ? items.map(item => `<span class="revalidation-snippet"><b>${esc(item.source === 'body' ? '正文' : '一句话')}</b>${esc(item.text)}</span>`).join('')
+      ? items.map(item => `<span class="revalidation-snippet ${item.selected ? 'selected' : ''}"><b>${esc(item.selected ? '已计票' : evidenceLabel[item.source] || '证据')}</b>${esc(item.text)}</span>`).join('')
       : `<span class="revalidation-snippet empty">${esc(emptyText)}</span>`;
+    const sourceVoteCount = Number(evidence.independent?.research || 0);
+    const onlineState = result.online === 'verified'
+      ? result.onlineError ? '部分检索失败' : `${result.verifiedSources || 0} 条在线来源`
+      : result.online === 'unavailable' ? '在线来源不可用' : '目录来源';
     const sourceLinks = (result.sources || []).slice(0, 7).map(source => `
       <a class="${source.sourceType === 'live' ? 'live' : ''}" href="${esc(safeExternalUrl(source.url))}" target="_blank" rel="noopener" title="${esc(source.description || '')}">
         ${esc(source.title || source.publisher || '来源')}${source.sourceType === 'live' ? ' · 在线' : ' · 目录'}
@@ -4466,13 +4772,13 @@ function renderCategoryRevalidationPreview() {
           <span class="badge">${esc(categoryLabel(result.current?.category))}${(result.current?.categories || []).length > 1 ? ` · ${result.current.categories.map(categoryLabel).join(' + ')}` : ''}</span>
           <span>→</span>
           <span class="badge suggested">${esc(categoryLabel(result.suggested?.category))}${(result.suggested?.categories || []).length > 1 ? ` · ${result.suggested.categories.map(categoryLabel).join(' + ')}` : ''}</span>
-          <span>${esc(result.suggested?.cardType || '')} · ${Math.round((result.categoryConfidence || 0) * 100)}%</span>
+          <span>${esc(result.suggested?.cardType || '')} · ${esc(confidenceLabel)}</span>
         </div>
         <p>${esc(result.categoryReason || '')}</p>
         <div class="revalidation-evidence-list">
           <div class="revalidation-evidence-row">
-            <b>主对象证据</b>
-            <span>${esc(evidence.mainReason || '未提供主对象判断理由。')}</span>
+            <b>卡片一致性证据</b>
+            <span>只用于检查卡片正文是否与独立分类结论一致，不决定分类。${esc(evidence.mainReason || '')}</span>
             <div>${renderEvidence(evidence.main, '未找到足以解释术语本体的正文片段')}</div>
           </div>
           <div class="revalidation-evidence-row">
@@ -4480,12 +4786,26 @@ function renderCategoryRevalidationPreview() {
             <span>${esc(evidence.crossReason || '未提供交叉分类判断理由。')}</span>
             <div>${renderEvidence(evidence.cross, '没有独立的交叉正文证据')}</div>
           </div>
+          ${evidence.model?.length ? `<div class="revalidation-evidence-row">
+            <b>模型分析</b>
+            <span>模型独立判断术语分类并选择支持来源；模型结论本身不计为来源票。</span>
+            <div>${renderEvidence(evidence.model, '')}</div>
+          </div>` : independentStatus === 'model-failed' || independentStatus === 'model-unavailable' ? `<div class="revalidation-evidence-row negative">
+            <b>模型分析</b>
+            <span>${esc(evidence.modelError || '模型未执行，无法形成独立分类结论。')}</span>
+            <div>${renderEvidence([], '没有可用的模型核验结果')}</div>
+          </div>` : ''}
+          ${evidence.research?.length ? `<div class="revalidation-evidence-row">
+            <b>检索佐证</b>
+            <span>只统计模型实际引用并通过验证的来源；至少两条不同来源才可自动改分类。</span>
+            <div>${renderEvidence(evidence.research, '')}</div>
+          </div>` : ''}
           ${evidence.negative?.length ? `<div class="revalidation-evidence-row negative">
             <b>明确否定证据</b>
             <span>${esc(evidence.negativeReason || '这些片段不会被作为正面分类证据。')}</span>
             <div>${renderEvidence(evidence.negative, '')}</div>
           </div>` : ''}
-          <small class="revalidation-source-note">来源目录和检索页面只用于后续核查，不单独构成分类依据。</small>
+          <small class="revalidation-source-note">分类来自规则候选 + 独立模型 + 模型引用并验证的真实来源。来源票 ${sourceVoteCount}/2；卡片正文只做一致性检查。</small>
         </div>
         ${result.contentWarnings?.length ? `<div class="revalidation-warning">
           ${result.contentWarnings.map(esc).join('；')}。分类核验不会自动改写正文。
@@ -4493,7 +4813,7 @@ function renderCategoryRevalidationPreview() {
         </div>` : ''}
         <div class="revalidation-evidence">${sourceLinks}</div>
       </div>
-      <div class="revalidation-meta"><span class="revalidation-status ${statusClass}">${statusText}</span><span>${esc(result.online === 'verified' ? `${result.verifiedSources || 0} 条在线来源` : result.online === 'unavailable' ? '在线来源不可用' : '目录来源')}</span></div>
+      <div class="revalidation-meta"><span class="revalidation-status ${statusClass}">${statusText}</span><span>${esc(onlineState)} · 来源票 ${sourceVoteCount}/2</span></div>
     </article>`;
   }).join('');
   $('#btnApplyCategoryRevalidation').disabled = state.selected.size === 0;
@@ -4582,7 +4902,8 @@ function applyContentFixReview() {
 }
 
 async function runCategoryRevalidation() {
-  if (!categoryRevalidationState) return;
+  const session = categoryRevalidationState;
+  if (!session || session.running) return;
   const button = $('#btnRunCategoryRevalidation');
   const status = $('#revalidationStatus');
   const cards = categoryRevalidationCards();
@@ -4597,6 +4918,11 @@ async function runCategoryRevalidation() {
     message: '准备核验',
     meta: { online }
   });
+  session.running = true;
+  session.taskId = task?.id || '';
+  session.progress = 0;
+  session.error = '';
+  if (!session.target) lastCategoryRevalidationSession = session;
   button.disabled = true;
   status.style.color = 'var(--ink-3)';
   status.textContent = `正在按规则核验 ${cards.length} 张知识卡…`;
@@ -4605,11 +4931,15 @@ async function runCategoryRevalidation() {
     let coverage = KNOWLEDGE_SOURCE_COVERAGE;
     const credentials = await modelRequestPayload();
     for (let start = 0; start < cards.length; start += 120) {
+      session.progress = Math.round(start / Math.max(1, cards.length) * 90);
       updateTaskState(task, {
-        progress: Math.round(start / Math.max(1, cards.length) * 90),
+        progress: session.progress,
         message: `正在核验 ${Math.min(start + 120, cards.length)} / ${cards.length} 张知识卡`
       });
-      status.textContent = `正在核验 ${Math.min(start + 120, cards.length)} / ${cards.length} 张知识卡…`;
+      if (categoryRevalidationState === session) {
+        status.textContent = `正在核验 ${Math.min(start + 120, cards.length)} / ${cards.length} 张知识卡…`;
+        renderCategoryRevalidationFilterControls();
+      }
       const response = await fetch('/api/revalidate-category', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -4623,38 +4953,62 @@ async function runCategoryRevalidation() {
     const defaultSelected = results
       .filter(result =>
         result.recommendation === 'change' &&
-        result.evidence?.sufficient === true &&
         result.changed &&
+        result.evidence?.independentSufficient === true &&
         !result.contentWarnings?.length &&
         result.categoryConfidence >= 0.85)
       .map(result => `${result.articleId}:${result.cardId}`);
-    categoryRevalidationState = {
-      ...categoryRevalidationState,
+    Object.assign(session, {
       scope: revalidationScopeValue(),
       online,
       results,
       coverage,
-      selected: new Set(defaultSelected)
-    };
-    renderCategoryRevalidationSources(coverage);
-    renderCategoryRevalidationPreview();
+      selected: new Set(defaultSelected),
+      running: false,
+      progress: 100,
+      error: '',
+      completedAt: Date.now()
+    });
+    if (!session.target) lastCategoryRevalidationSession = session;
     const changed = results.filter(result => result.changed).length;
     const review = results.filter(result =>
       result.contentWarnings?.length ||
       result.categoryConfidence < 0.85 ||
-      result.evidence?.sufficient === false ||
+      result.evidence?.independentSufficient !== true ||
       result.recommendation === 'review').length;
-    status.textContent = `核验完成：${results.length} 张，建议修改 ${changed} 张，需人工确认 ${review} 张。默认只勾选正文证据充分的变化项。`;
-    status.style.color = changed || review ? '#7a5312' : 'var(--teal)';
+    const sourceShort = results.filter(result => result.evidence?.independent?.status === 'source-insufficient').length;
+    const conflicts = results.filter(result => result.evidence?.independent?.status === 'model-conflict').length;
+    const modelFailures = results.filter(result =>
+      ['model-failed', 'model-unavailable'].includes(result.evidence?.independent?.status)).length;
+    if (categoryRevalidationState === session) {
+      renderCategoryRevalidationSources(coverage);
+      renderCategoryRevalidationFilterControls();
+      renderCategoryRevalidationPreview();
+      status.textContent = `核验完成：${results.length} 张，建议修改 ${changed} 张，需人工确认 ${review} 张`
+        + `（来源不足 ${sourceShort}，规则冲突 ${conflicts}，模型不可用 ${modelFailures}）。`;
+      status.style.color = changed || review ? '#7a5312' : 'var(--teal)';
+      renderCategoryRevalidationScopeSummary();
+    }
     finishTaskState(task, { message: `核验完成 ${results.length} 张，建议修改 ${changed} 张` });
+    if ($('#categoryRevalidationModal').hidden) toast('知识卡核验已完成，可重新打开核验分类查看');
   } catch (error) {
-    failTaskState(task, error.message || '分类核验失败', ['检查模型连接', '关闭联网核验后重试', '缩小核验范围']);
-    status.textContent = `核验失败：${error.message || error}`;
-    status.style.color = 'var(--danger)';
-    categoryRevalidationState.results = [];
-    renderCategoryRevalidationPreview();
+    const message = error.message || '分类核验失败';
+    failTaskState(task, message, taskRecoveryFor('knowledge-revalidation', message));
+    Object.assign(session, {
+      running: false,
+      error: message,
+      results: [],
+      selected: new Set()
+    });
+    if (!session.target) lastCategoryRevalidationSession = session;
+    if (categoryRevalidationState === session) {
+      status.textContent = `核验失败：${message}`;
+      status.style.color = 'var(--danger)';
+      renderCategoryRevalidationFilterControls();
+      renderCategoryRevalidationPreview();
+    }
   } finally {
-    button.disabled = false;
+    if (categoryRevalidationState === session) button.disabled = false;
   }
 }
 
@@ -4664,7 +5018,7 @@ function applyCategoryRevalidation() {
   const selected = state.results.filter(result =>
     state.selected.has(`${result.articleId}:${result.cardId}`) &&
     result.changed &&
-    result.evidence?.sufficient !== false);
+    result.evidence?.independentSufficient === true);
   if (!selected.length) return;
   const backup = {
     id: `category-revalidation-${Date.now()}`,
@@ -5034,6 +5388,10 @@ async function generateKnowledgeDetail() {
 /* ================= 视图 4：导出 / 归档 ================= */
 function wireExport() {
   $('#kbSearch').addEventListener('input', (e) => { kb.q = e.target.value; renderKB(); });
+  $('#kbArticleFilter').addEventListener('change', (e) => {
+    kb.article = e.target.value || 'all';
+    renderKB();
+  });
   $('#kbCategorySeg').addEventListener('click', (e) => {
     const button = e.target.closest('button');
     if (!button) return;
@@ -5072,10 +5430,13 @@ function wireExport() {
     }
     const scope = e.target.closest('[data-revalidate-scope]');
     if (scope) {
+      if (categoryRevalidationState.running) {
+        toast('核验正在后台运行，完成后可切换范围');
+        return;
+      }
       $$('#revalidationScopeSeg button').forEach(button => button.classList.toggle('on', button === scope));
-      categoryRevalidationState.results = [];
-      categoryRevalidationState.selected.clear();
-      renderCategoryRevalidationPreview();
+      categoryRevalidationState.scope = scope.dataset.revalidateScope;
+      clearCategoryRevalidationResults('核验范围已更新，请生成核验预览。');
       return;
     }
     const pick = e.target.closest('[data-revalidation-pick]');
@@ -5084,6 +5445,48 @@ function wireExport() {
       else categoryRevalidationState.selected.delete(pick.dataset.revalidationPick);
       $('#btnApplyCategoryRevalidation').disabled = categoryRevalidationState.selected.size === 0;
     }
+  });
+  $('#btnToggleRevalidationFilters').addEventListener('click', () => {
+    if (!categoryRevalidationState) return;
+    categoryRevalidationState.filterPanelOpen = !categoryRevalidationState.filterPanelOpen;
+    renderCategoryRevalidationFilterControls();
+  });
+  $('#revalidationKnowledgeCategorySeg').addEventListener('click', (e) => {
+    const button = e.target.closest('[data-rkcat]');
+    if (!button || !categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.filters.category = button.dataset.rkcat;
+    clearCategoryRevalidationResults();
+  });
+  $('#revalidationCardTypeSeg').addEventListener('click', (e) => {
+    const button = e.target.closest('[data-rcardtype]');
+    if (!button || !categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.filters.cardType = button.dataset.rcardtype;
+    clearCategoryRevalidationResults();
+  });
+  $('#revalidationArticleSearch').addEventListener('input', (e) => {
+    if (!categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.articleQuery = e.target.value;
+    renderCategoryRevalidationArticleOptions();
+  });
+  $('#revalidationArticleSelect').addEventListener('change', (e) => {
+    if (!categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.filters.article = e.target.value || 'all';
+    clearCategoryRevalidationResults();
+  });
+  $('#revalidationTopicSelect').addEventListener('change', (e) => {
+    if (!categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.filters.topic = e.target.value || 'all';
+    const selectedArticle = ARTICLES.find(article => article.id === categoryRevalidationState.filters.article);
+    if (categoryRevalidationState.filters.topic !== 'all' && selectedArticle?.topic !== categoryRevalidationState.filters.topic) {
+      categoryRevalidationState.filters.article = 'all';
+    }
+    clearCategoryRevalidationResults();
+  });
+  $('#btnResetRevalidationFilters').addEventListener('click', () => {
+    if (!categoryRevalidationState || categoryRevalidationState.running) return;
+    categoryRevalidationState.filters = { ...categoryRevalidationState.initialFilters };
+    categoryRevalidationState.articleQuery = '';
+    clearCategoryRevalidationResults();
   });
   $('#contentFixModal').addEventListener('click', (e) => {
     if (e.target.closest('[data-close]') || e.target.id === 'btnCancelContentFix') closeContentFixReview();
@@ -6611,6 +7014,122 @@ function renderHeatmap() {
     <button type="button" class="heatmap-cell level-${cell.level}" data-plan-date="${cell.date}"
       title="${cell.date} · ${cell.articles} 篇文章 · ${cell.words} 个单词${cell.legacy ? ' · 旧版汇总' : ''}"
       aria-label="${cell.date}，${cell.articles} 篇文章，${cell.words} 个单词"></button>`).join('');
+  const activeDays = cells.filter(cell => cell.count > 0).length;
+  const maxDay = cells.reduce((max, cell) => Math.max(max, cell.count), 0);
+  $('#learningHeatmapSummary').textContent =
+    `最近 26 周 · ${activeDays} 个学习日 · 单日最高 ${maxDay} 次活动`;
+}
+
+function planChartDateLabel(dateKey) {
+  const [, month, day] = String(dateKey || '').split('-').map(Number);
+  return month && day ? `${month}月${day}日` : String(dateKey || '');
+}
+
+function planWeekRangeLabel(week) {
+  return `${planChartDateLabel(week.weekStart)}–${planChartDateLabel(week.weekEnd)}`;
+}
+
+function renderLearningActivityBars() {
+  const container = $('#learningActivityBars');
+  if (!container) return;
+  const weeks = LearningEvents.weeklyActivity(S, todayStr(), 12);
+  const metrics = [
+    { key: 'articleRead', label: '文章精读', tone: 'article-read' },
+    { key: 'articleReview', label: '文章复习', tone: 'article-review' },
+    { key: 'wordLearned', label: '新学单词', tone: 'word-learned' },
+    { key: 'wordReviewed', label: '复习单词', tone: 'word-reviewed' }
+  ];
+  container.innerHTML = metrics.map(metric => {
+    const peak = Math.max(1, ...weeks.map(week => Number(week[metric.key]) || 0));
+    const current = Number(weeks.at(-1)?.[metric.key]) || 0;
+    const bars = weeks.map(week => {
+      const value = Number(week[metric.key]) || 0;
+      const height = value ? Math.max(8, Math.round(value / peak * 100)) : 0;
+      const detail = `${planWeekRangeLabel(week)} · ${metric.label} ${value} · ${week.activeDays} 个学习日`;
+      return `<button type="button" class="activity-bar ${value ? '' : 'is-empty'} ${week.isCurrent ? 'is-current' : ''}"
+        style="--bar-height:${height}%"
+        data-chart-detail="${esc(detail)}"
+        title="${esc(detail)}"
+        aria-label="${esc(detail)}"><span></span></button>`;
+    }).join('');
+    return `<section class="activity-panel tone-${metric.tone}" data-activity-panel="${metric.key}">
+      <header>
+        <span><i></i>${metric.label}</span>
+        <small>本周 <b>${current}</b> · 峰值 ${peak === 1 && !weeks.some(week => week[metric.key]) ? 0 : peak}</small>
+      </header>
+      <div class="activity-plot">${bars}</div>
+      <footer><span>${planChartDateLabel(weeks[0]?.weekStart)}</span><span>${planChartDateLabel(weeks.at(-1)?.weekStart)}</span></footer>
+    </section>`;
+  }).join('');
+  const activityDays = weeks.reduce((total, week) => total + week.activeDays, 0);
+  const targetDays = weeks.reduce((total, week) => total + week.targetDays, 0);
+  $('#learningActivityDetail').textContent =
+    `近 12 周累计 ${activityDays} 个学习日，其中 ${targetDays} 天完成计划目标。选择任意周柱查看明细。`;
+}
+
+function activeRateDetailText(item) {
+  return `${item.date} · 7 日窗口 ${item.windowStart} 至 ${item.windowEnd} · `
+    + `${item.activeDays}/7 个学习日（${Math.round(item.rate * 100)}%） · `
+    + `文章 ${item.articleRead + item.articleReview} · 单词 ${item.wordLearned + item.wordReviewed}`
+    + `${item.targetCompleted ? ' · 当日达标' : ''}`;
+}
+
+function renderLearningActiveRateChart() {
+  const container = $('#learningActiveRateChart');
+  if (!container) return;
+  const series = LearningEvents.activeRateSeries(S, todayStr(), 30, 7);
+  const width = 760;
+  const height = 190;
+  const left = 38;
+  const right = 14;
+  const top = 14;
+  const bottom = 38;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const xAt = index => left + (series.length <= 1 ? plotWidth / 2 : index * plotWidth / (series.length - 1));
+  const yAt = rate => top + (1 - Math.max(0, Math.min(1, rate))) * plotHeight;
+  const pointData = series.map((item, index) => ({
+    ...item,
+    x: xAt(index),
+    y: yAt(item.rate)
+  }));
+  const linePoints = pointData.map(item => `${item.x.toFixed(1)},${item.y.toFixed(1)}`).join(' ');
+  const areaPath = `M ${left} ${top + plotHeight} L ${pointData.map(item => `${item.x.toFixed(1)} ${item.y.toFixed(1)}`).join(' L ')} L ${left + plotWidth} ${top + plotHeight} Z`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(rate => {
+    const y = yAt(rate);
+    return `<line class="active-rate-grid" x1="${left}" x2="${left + plotWidth}" y1="${y}" y2="${y}"></line>
+      <text class="active-rate-axis-label" x="${left - 8}" y="${y + 3}" text-anchor="end">${Math.round(rate * 100)}%</text>`;
+  }).join('');
+  const tickIndexes = [...new Set([0, Math.round((series.length - 1) / 4), Math.round((series.length - 1) / 2), Math.round((series.length - 1) * 3 / 4), series.length - 1])];
+  const ticks = tickIndexes.map(index => `
+    <text class="active-rate-date-label" x="${xAt(index)}" y="${height - 12}" text-anchor="${index === 0 ? 'start' : index === series.length - 1 ? 'end' : 'middle'}">${planChartDateLabel(series[index]?.date).replace('月', '/').replace('日', '')}</text>`).join('');
+  const points = pointData.map((item, index) => {
+    const detail = activeRateDetailText(item);
+    return `<circle class="active-rate-point ${index === pointData.length - 1 ? 'is-current' : ''}"
+      cx="${item.x}" cy="${item.y}" r="${index === pointData.length - 1 ? 4 : 3}"
+      data-chart-detail="${esc(detail)}"
+      tabindex="0" role="button"
+      aria-label="${esc(detail)}"><title>${esc(detail)}</title></circle>`;
+  }).join('');
+  const targetMarks = pointData.filter(item => item.targetCompleted).map(item =>
+    `<path class="active-rate-target" d="M ${item.x} ${top + plotHeight + 5} l -4 7 h 8 Z"><title>${esc(item.date)} 完成学习目标</title></path>`
+  ).join('');
+  container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近 30 天 7 日学习活跃率">
+    ${grid}
+    <path class="active-rate-area" d="${areaPath}"></path>
+    <polyline class="active-rate-line" points="${linePoints}"></polyline>
+    ${targetMarks}
+    ${points}
+    ${ticks}
+  </svg>`;
+  const latest = series.at(-1);
+  const activeDays = series.filter(item => item.dayActive).length;
+  const targetDays = series.filter(item => item.targetCompleted).length;
+  $('#learningActiveRateSummary').innerHTML =
+    `<span><b>${Math.round((latest?.rate || 0) * 100)}%</b>当前活跃率</span>`
+    + `<span><b>${activeDays}</b>近 30 天有记录</span>`
+    + `<span><b>${targetDays}</b>达标日</span>`;
+  if (latest) $('#learningActiveRateDetail').textContent = activeRateDetailText(latest);
 }
 
 function renderPlanView() {
@@ -6658,6 +7177,8 @@ function renderPlanView() {
     <span><b>${completedDays}</b>达标日</span>`;
   renderPlanDay(LearningEvents.summaryForDay(S, planSelectedDate));
   renderHeatmap();
+  renderLearningActivityBars();
+  renderLearningActiveRateChart();
 }
 
 function wirePlan() {
@@ -6677,6 +7198,14 @@ function wirePlan() {
   });
   const root = $('#view-plan');
   root?.addEventListener('click', (event) => {
+    const chartPoint = event.target.closest('[data-chart-detail]');
+    if (chartPoint) {
+      const detailTarget = chartPoint.closest('#learningActivityBars')
+        ? $('#learningActivityDetail')
+        : $('#learningActiveRateDetail');
+      if (detailTarget) detailTarget.textContent = chartPoint.dataset.chartDetail;
+      return;
+    }
     const dateButton = event.target.closest('[data-plan-date]');
     if (dateButton) {
       planSelectedDate = dateButton.dataset.planDate;

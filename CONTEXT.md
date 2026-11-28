@@ -18,7 +18,15 @@ Direct evidence that the main explanatory object belongs to a category. Finance 
 
 ## Revalidation evidence
 
-The category-revalidation preview separates concrete snippets from `one` and `body` into main-object evidence, independent cross-category evidence, and explicit negative evidence. A rule-name or keyword hit alone is not a suggestion. If the evidence is insufficient, keep the current category, lower confidence, and leave the item unselected. Source directories are research entry points, not classification proof.
+The category-revalidation preview separates concrete snippets from `one` and `body` into main-object evidence, independent cross-category evidence, and explicit negative evidence. Card text is used only for consistency checking. Independent classification comes from a model conclusion plus at least two distinct, verified external sources explicitly selected by that model. Rule names, card text, source directories, duplicate URLs, and unselected search results are not independent source votes.
+
+## Independent source vote
+
+One verified external search result selected by the independent model for the target primary category. It must have a valid URL, exist in the current research result set, be unique by URL, and be explicitly cited by the model. Two independent source votes are required before a category change can be proposed automatically.
+
+## Model conflict
+
+The independent model's primary category differs from the local rule candidate. A model conflict is a review state, not source insufficiency, and cannot be automatically applied.
 
 ## Financial consequence
 

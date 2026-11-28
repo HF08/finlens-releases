@@ -11,7 +11,7 @@ const METADATA = path.join(OUT, 'ecdict-build-sample.metadata.json');
 fs.mkdirSync(OUT, { recursive: true });
 fs.writeFileSync(CSV, [
   'word,phonetic,definition,translation,pos,collins,oxford,tag,bnc,frq,exchange,detail,audio',
-  '"surge","sɜːdʒ","to rise suddenly","v. 激增；涌动","v:100",4,1,"ky toefl ielts",4122,3196,"p:surged/d:surged/i:surging/3:surges",,'
+  '"surge","sɜːdʒ","to rise suddenly","v. 激增；涌动","v:100",4,1,"cet4 cet6 ielts",4122,3196,"p:surged/d:surged/i:surging/3:surges",,'
 ].join('\n'));
 if (fs.existsSync(DB)) fs.unlinkSync(DB);
 if (fs.existsSync(METADATA)) fs.unlinkSync(METADATA);

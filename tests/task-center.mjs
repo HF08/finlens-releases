@@ -37,6 +37,18 @@ TaskCenter.finishTask(state, success.id, { message: '导图已生成' });
 assert.equal(state.tasks.find(item => item.id === success.id).status, 'success');
 assert.equal(state.tasks.find(item => item.id === success.id).progress, 100);
 
+const cancelled = TaskCenter.createTask(state, { type: 'generic', title: '可删除的取消任务' });
+TaskCenter.cancelTask(state, cancelled.id, '用户取消');
+assert.equal(TaskCenter.deleteTask(state, cancelled.id), true);
+assert.equal(state.tasks.some(item => item.id === cancelled.id), false);
+
+const removableFailure = TaskCenter.createTask(state, { type: 'generic', title: '可清理的失败任务' });
+TaskCenter.failTask(state, removableFailure.id, 'fixture failure');
+const cleared = TaskCenter.clearInvalidTasks(state);
+assert.equal(cleared, 2);
+assert.equal(state.tasks.some(item => item.status === 'failed'), false);
+assert.equal(state.tasks.find(item => item.id === success.id).status, 'success');
+
 const invalid = TaskCenter.createTask(state, { type: 'unknown', title: '' });
 assert.equal(invalid.type, 'generic');
 assert.equal(invalid.title, '后台任务');

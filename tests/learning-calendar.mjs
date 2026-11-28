@@ -50,6 +50,24 @@ try {
   assert.ok(await page.locator('#planCalendarGrid [data-plan-date]').count() >= 28);
   assert.equal(await page.locator('[data-plan-note]').inputValue(), 'Calendar fixture');
   assert.ok(await page.locator('#learningHeatmap .heatmap-cell').count() >= 100);
+  const heatmapCellSize = await page.locator('#learningHeatmap .heatmap-cell').first()
+    .evaluate(cell => {
+      const box = cell.getBoundingClientRect();
+      return { width: box.width, height: box.height };
+    });
+  assert.ok(heatmapCellSize.width >= 15 && heatmapCellSize.height >= 15,
+    JSON.stringify(heatmapCellSize));
+  assert.equal(await page.locator('#learningActivityBars [data-activity-panel]').count(), 4);
+  const weeklyBarCounts = await page.locator('#learningActivityBars [data-activity-panel]')
+    .evaluateAll(panels => panels.map(panel => panel.querySelectorAll('.activity-bar').length));
+  assert.deepEqual(weeklyBarCounts, [12, 12, 12, 12]);
+  assert.equal(await page.locator('#learningActiveRateChart svg').count(), 1);
+  assert.equal(await page.locator('#learningActiveRateChart .active-rate-point').count(), 30);
+  assert.ok(await page.locator('#learningActiveRateChart .active-rate-target').count() >= 1);
+  await page.locator('#learningActivityBand').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'tests/shots/feedback-final/learning-analytics-v57.png' });
+  await page.locator('#learningActiveRateBand').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'tests/shots/feedback-final/learning-active-rate-v57.png' });
 
   await page.reload({ waitUntil: 'networkidle' });
   const persisted = await page.evaluate(date => {
@@ -72,13 +90,20 @@ try {
     overflow: document.documentElement.scrollWidth - window.innerWidth,
     calendarVisible: Boolean(document.querySelector('#planCalendarGrid')),
     dayVisible: Boolean(document.querySelector('#planDayBody')),
-    heatmapVisible: Boolean(document.querySelector('#learningHeatmap'))
+    heatmapVisible: Boolean(document.querySelector('#learningHeatmap')),
+    activityVisible: Boolean(document.querySelector('#learningActivityBars [data-activity-panel]')),
+    activeRateVisible: Boolean(document.querySelector('#learningActiveRateChart svg'))
   }));
   assert.ok(mobileLayout.overflow <= 1 && mobileLayout.calendarVisible &&
-    mobileLayout.dayVisible && mobileLayout.heatmapVisible, JSON.stringify(mobileLayout));
+    mobileLayout.dayVisible && mobileLayout.heatmapVisible &&
+    mobileLayout.activityVisible && mobileLayout.activeRateVisible, JSON.stringify(mobileLayout));
+  await page.locator('#learningActivityBand').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'tests/shots/feedback-final/learning-analytics-mobile-v57.png' });
+  await page.locator('#learningActiveRateBand').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'tests/shots/feedback-final/learning-active-rate-mobile-v57.png' });
   assert.deepEqual(errors, []);
 
-  console.log('PASS learning calendar plans, actual history, targets, heatmap and persistence');
+  console.log('PASS learning calendar plans, actual history, targets, heatmap, activity bars and active-rate chart');
 } finally {
   await context.close();
   await browser.close();

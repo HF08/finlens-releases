@@ -1,5 +1,14 @@
 /* 领域分类重新核验：规则、来源覆盖、预览、应用与撤销。 */
 import { createRequire } from 'node:module';
+import * as ServerKnowledge from '../server/server.mjs';
+
+const {
+  classifyKnowledgeCategory,
+  evidenceCategorySupport,
+  revalidationConfidence,
+  annotate: annotateFixture,
+  modelRequestTimeoutMs
+} = ServerKnowledge;
 
 const req = createRequire(process.env.PW_BASE || 'C:/Users/NORA/.workbuddy/binaries/node/workspace/');
 const { chromium } = req('playwright-core');
@@ -58,6 +67,14 @@ const apiResponse = await fetch(`${BASE}/api/revalidate-category`, {
         term: 'market correction', en: 'Market correction',
         category: 'background', cardType: 'concept',
         one: '', body: ''
+      },
+      {
+        id: 'rv-generic-evidence', articleId: 'a', articleTitle: 'Fixture',
+        term: 'team folklore and decision habits', en: 'Team folklore and decision habits',
+        category: 'background', cardType: 'concept',
+        classificationReason: '该概念主要描述组织制度中的共同叙事与决策习惯，属于组织与制度背景，没有金融资产、融资关系或可复现的分析程序。',
+        one: '团队民俗是指组织成员在长期协作中形成的共同叙事和默认判断方式。',
+        body: '这些叙事会通过会议、师徒关系和非正式沟通延续，并影响团队如何解释过去经验、识别问题以及选择下一步行动。'
       }
     ]
   })
@@ -65,8 +82,181 @@ const apiResponse = await fetch(`${BASE}/api/revalidate-category`, {
 const apiData = await apiResponse.json();
 const byId = Object.fromEntries((apiData.results || []).map(item => [item.cardId, item]));
 check('Category revalidation endpoint returns preview results',
-  apiResponse.status === 200 && apiData.ok && apiData.results?.length === 7,
+  apiResponse.status === 200 && apiData.ok && apiData.results?.length === 8,
   `${apiResponse.status} ${(apiData.results || []).length}`);
+const modelOnlySupport = evidenceCategorySupport(
+  { category: 'background', categories: ['background'] },
+  {
+    modelCategory: 'background',
+    modelStatus: 'success',
+    modelSourceIndexes: [],
+    research: []
+  }
+);
+const selectedSourceSupport = evidenceCategorySupport(
+  { category: 'background', categories: ['background'] },
+  {
+    modelCategory: 'background',
+    modelStatus: 'success',
+    modelSourceIndexes: [1, 2],
+    research: [
+      {
+        sourceIndex: 1,
+        url: 'https://source-one.test/labour',
+        verified: true,
+        text: 'The labour market is tight and nominal wage growth remains stable.'
+      },
+      {
+        sourceIndex: 2,
+        url: 'https://source-two.test/wages',
+        verified: true,
+        text: 'Wage growth could pick up quickly as labour markets tighten.'
+      }
+    ]
+  }
+);
+const modelPlusOneSource = evidenceCategorySupport(
+  { category: 'finance', categories: ['finance'] },
+  {
+    modelCategory: 'finance',
+    modelStatus: 'success',
+    modelSourceIndexes: [1],
+    research: [{
+      sourceIndex: 1,
+      url: 'https://source-one.test/funding',
+      verified: true,
+      text: 'Perpetual futures payments and oracle funding.'
+    }]
+  }
+);
+const modelConflictSupport = evidenceCategorySupport(
+  { category: 'background', categories: ['background', 'finance'] },
+  {
+    modelCategory: 'finance',
+    modelStatus: 'success',
+    modelSourceIndexes: [1, 2],
+    research: [
+      { sourceIndex: 1, url: 'https://source-one.test/a', verified: true, text: 'Funding and payments.' },
+      { sourceIndex: 2, url: 'https://source-two.test/b', verified: true, text: 'Perpetual futures and funding.' }
+    ]
+  }
+);
+const modelFailureSupport = evidenceCategorySupport(
+  { category: 'finance', categories: ['finance'] },
+  {
+    modelStatus: 'failed',
+    modelError: 'model request timeout',
+    modelSourceIndexes: [],
+    research: []
+  }
+);
+const invalidSourceSupport = evidenceCategorySupport(
+  { category: 'finance', categories: ['finance'] },
+  {
+    modelCategory: 'finance',
+    modelStatus: 'success',
+    modelSourceIndexes: [1, 1, 9],
+    research: [
+      {
+        sourceIndex: 1,
+        url: 'https://source-one.test/repeated',
+        verified: true,
+        text: 'Funding payments for perpetual futures.'
+      },
+      {
+        sourceIndex: 2,
+        url: 'https://source-two.test/directory',
+        verified: false,
+        text: 'Official source directory.'
+      }
+    ]
+  }
+);
+check('Category verification counts only distinct verified sources selected by the model',
+  modelOnlySupport.votes === 0 &&
+  modelOnlySupport.status === 'source-insufficient' &&
+  selectedSourceSupport.votes === 2 &&
+  selectedSourceSupport.sufficient === true &&
+  selectedSourceSupport.status === 'sufficient' &&
+  modelPlusOneSource.votes === 1 &&
+  modelPlusOneSource.sufficient === false &&
+  invalidSourceSupport.votes === 1,
+  JSON.stringify({ modelOnlySupport, selectedSourceSupport, modelPlusOneSource, invalidSourceSupport }));
+check('Category verification separates model conflict from source insufficiency',
+  modelConflictSupport.status === 'model-conflict' &&
+  modelConflictSupport.modelConflict === true &&
+  modelConflictSupport.sufficient === false &&
+  modelFailureSupport.status === 'model-failed' &&
+  /timeout/.test(modelFailureSupport.modelError),
+  JSON.stringify({ modelConflictSupport, modelFailureSupport }));
+const modelTimeoutDefaults = {
+  defaultMs: modelRequestTimeoutMs?.({}),
+  overrideMs: modelRequestTimeoutMs?.({ modelTimeoutMs: 1234 })
+};
+check('Model request timeout defaults long enough while allowing explicit overrides',
+  modelTimeoutDefaults.defaultMs === 180000 &&
+  modelTimeoutDefaults.overrideMs === 1234,
+  JSON.stringify(modelTimeoutDefaults));
+const fallbackProgress = [];
+try {
+  await annotateFixture({
+    title: 'Progress fixture',
+    paragraphs: ['A sufficiently long finance paragraph explains funding payments and perpetual futures.'],
+    vocabFocus: 'finance'
+  }, event => fallbackProgress.push(event));
+} catch {}
+check('Annotation fallback reports progress before paragraph retries',
+  fallbackProgress.some(event => /逐段重试/.test(event.message || '')),
+  JSON.stringify(fallbackProgress));
+const supportedConfidence = revalidationConfidence(
+  { category: 'background', categories: ['background'], confidence: 0.78, fallback: true },
+  {
+    main: [{ text: '卡片正文描述与分类一致。' }],
+    cross: [],
+    negative: [],
+    model: [{ text: '模型支持背景层。' }],
+    modelCategory: 'background',
+    modelConfidence: 0.82,
+    research: selectedSourceSupport.sourceVotes,
+    independent: selectedSourceSupport,
+    sufficient: true
+  },
+  false,
+  []
+);
+check('Independent evidence raises confidence above a bare rule candidate',
+  supportedConfidence > 0.8,
+  String(supportedConfidence));
+const recentSixTerms = [
+  '贴现窗口',
+  '贴现率',
+  '联邦基金利率目标区间',
+  'foreign direct investment',
+  'financing source diversification',
+  'co-financing',
+  'public sector loans, grants and technical assistance',
+  'higher loss-absorbency requirement',
+  'Prediction markets and event contracts',
+  'Notional trading volume',
+  'Funding payments',
+  '未平仓合约（持仓量）'
+];
+const recentSixClassifications = recentSixTerms.map(term => {
+  const result = classifyKnowledgeCategory({ term, en: term, one: term, body: term });
+  return { term, category: result.category, categories: result.categories, confidence: result.confidence };
+});
+check('Recent finance terms are not left as unsupported background cards',
+  recentSixClassifications.every(item => item.categories.includes('finance')),
+  JSON.stringify(recentSixClassifications));
+const fsbListClassification = classifyKnowledgeCategory({
+  term: 'Financial Stability Board updated G-SIB list',
+  en: 'Financial Stability Board updated G-SIB list',
+  one: '金融稳定理事会更新系统重要性银行名单。',
+  body: '名单用于国际监管识别与协调，具体资本要求由分档框架决定。'
+});
+check('Institution and coordination lists remain background unless a financial instrument is explained',
+  fsbListClassification.category === 'background',
+  JSON.stringify(fsbListClassification));
 check('Category revalidation corrects known finance terms',
   byId['rv-market']?.suggested?.category === 'finance' &&
   byId['rv-power']?.suggested?.category === 'finance' &&
@@ -95,14 +285,26 @@ check('Category revalidation separates main-object, cross-domain, and negative e
     marital: byId['rv-marital-background']?.evidence
   }));
 check('Category revalidation does not turn keyword-only changes into suggestions',
-  byId['rv-insufficient']?.suggested?.category === 'background' &&
+  byId['rv-insufficient']?.suggested?.category === 'finance' &&
   byId['rv-insufficient']?.changed === false &&
-  byId['rv-insufficient']?.recommendation === 'keep' &&
+  byId['rv-insufficient']?.recommendation === 'review' &&
   byId['rv-insufficient']?.evidence?.sufficient === false &&
-  byId['rv-insufficient']?.categoryConfidence <= 0.65,
+  byId['rv-insufficient']?.evidence?.independentSufficient === false &&
+  byId['rv-insufficient']?.categoryConfidence === null,
   JSON.stringify(byId['rv-insufficient']));
-check('Category revalidation labels source directories as research entry points rather than proof',
-  byId['rv-divorce-finance']?.evidence?.sourcePolicy === 'research-entry-points-only',
+check('Offline rule candidate remains unapplied when no independent evidence is fetched',
+  byId['rv-generic-evidence']?.suggested?.category === 'background' &&
+  byId['rv-generic-evidence']?.evidence?.sufficient === true &&
+  byId['rv-generic-evidence']?.evidence?.model?.length === 0 &&
+  byId['rv-generic-evidence']?.evidence?.research?.length === 0 &&
+  byId['rv-generic-evidence']?.evidence?.independent?.votes === 0 &&
+  byId['rv-generic-evidence']?.evidence?.independentSufficient === false &&
+  byId['rv-generic-evidence']?.changed === false &&
+  byId['rv-generic-evidence']?.categoryConfidence === null,
+  JSON.stringify(byId['rv-generic-evidence']));
+check('Category revalidation separates decisive card text from model and research corroboration',
+  byId['rv-divorce-finance']?.evidence?.sourcePolicy === 'model-selected-verified-sources' &&
+  byId['rv-divorce-finance']?.evidence?.cardEvidencePolicy === 'primary-text-with-model-and-research-corroboration',
   JSON.stringify(byId['rv-divorce-finance']?.evidence?.sourcePolicy));
 check('Category revalidation flags known content mismatch without rewriting it',
   byId['rv-market']?.contentWarnings?.some(message => message.includes('ETF')) &&
@@ -168,6 +370,17 @@ check('Knowledge detail separates classification status from detail-source verif
   (await page.locator('.knowledge-research-badge').first().innerText()).includes('详解来源') &&
   (await page.locator('.knowledge-verification-badge').first().innerText()).includes('分类') &&
   await page.locator('#btnRevalidateCurrentCard').count() === 1);
+const detailControlBoxes = await page.locator('.knowledge-detail-hero .knowledge-meta-line > *')
+  .evaluateAll(elements => elements.map(element => {
+    const box = element.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  }));
+check('Knowledge detail header controls share height and content-based widths',
+  detailControlBoxes.length >= 5 &&
+  detailControlBoxes.every(box => box.width >= 40 && box.width <= 130) &&
+  detailControlBoxes.every(box => Math.abs(box.height - 28) <= 1),
+  JSON.stringify(detailControlBoxes));
+await page.screenshot({ path: 'tests/shots/feedback-final/knowledge-detail-controls-v51.png' });
 await page.locator('#btnRevalidateCurrentCard').click();
 check('Knowledge detail can launch in-card category verification',
   await page.locator('#categoryRevalidationModal').isVisible() &&
@@ -179,19 +392,117 @@ check('Knowledge base exposes a category revalidation modal',
   await page.locator('#categoryRevalidationModal').isVisible() &&
   (await page.locator('#revalidationSourceCoverage').innerText()).includes('SEC') &&
   (await page.locator('#revalidationSourceCoverage').innerText()).includes('Crossref'));
-const fixture = await page.evaluate(() => {
-  const card = filteredKnowledge()[0];
+await page.locator('#categoryRevalidationModal .modal-head [data-close]').click();
+const filterFixture = await page.evaluate(() => {
+  const card = allKnowledge()[0];
   return {
     articleId: card._aid,
     cardId: card.id,
     term: card.term,
-    articleTitle: card._title
+    articleTitle: card._title,
+    category: knowledgeCategoriesFor(card)[0],
+    categoryLabel: document.querySelector(`#kbCategorySeg button[data-kcat="${knowledgeCategoriesFor(card)[0]}"]`)?.textContent || '',
+    cardType: card.cardType || 'concept',
+    cardTypeLabel: knowledgeTypeLabel(card.cardType || 'concept'),
+    topic: card._topic,
+    topicLabel: (TOPICS.find(topic => topic.id === card._topic) || {}).name || ''
   };
 });
-await page.route('**/api/revalidate-category', route => route.fulfill({
-  status: 200,
-  contentType: 'application/json',
-  body: JSON.stringify({
+await page.selectOption('#kbArticleFilter', filterFixture.articleId);
+const knowledgeToolbarRows = await page.evaluate(() => {
+  const search = document.querySelector('#kbSearch').getBoundingClientRect();
+  const article = document.querySelector('#kbArticleFilter').getBoundingClientRect();
+  return { searchTop: search.top, searchBottom: search.bottom, articleTop: article.top };
+});
+check('Knowledge article selector sits on a separate toolbar row',
+  knowledgeToolbarRows.articleTop >= knowledgeToolbarRows.searchBottom,
+  JSON.stringify(knowledgeToolbarRows));
+await page.locator(`#kbCategorySeg button[data-kcat="${filterFixture.category}"]`).click();
+await page.fill('#kbSearch', filterFixture.term);
+const currentFilter = await page.evaluate(({ articleId, category, term }) => ({
+  cards: filteredKnowledge().map(card => ({
+    articleId: card._aid,
+    categories: knowledgeCategoriesFor(card),
+    text: [card.term, card.en, card.one, card.body, (card.match || []).join('')].join(' ').toLowerCase()
+  })),
+  articleOptions: [...document.querySelectorAll('#kbArticleFilter option')].map(option => option.value)
+}), filterFixture);
+check('Knowledge filters support article, category, and search together',
+  currentFilter.cards.length > 0 &&
+  currentFilter.cards.every(card =>
+    card.articleId === filterFixture.articleId &&
+    card.categories.includes(filterFixture.category) &&
+    card.text.includes(filterFixture.term.toLowerCase())) &&
+  currentFilter.articleOptions.includes(filterFixture.articleId),
+  JSON.stringify(currentFilter));
+const fixture = filterFixture;
+await page.locator('#btnRevalidateKnowledgeCategories').click();
+const filteredScopeSummary = await page.locator('#revalidationScopeSummary').innerText();
+check('Current-filter revalidation shows the active article, category, search, and card count',
+  filteredScopeSummary.includes(filterFixture.articleTitle) &&
+  filteredScopeSummary.includes(filterFixture.categoryLabel) &&
+  filteredScopeSummary.includes(filterFixture.term) &&
+  filteredScopeSummary.includes('1 张知识卡'),
+  filteredScopeSummary);
+check('Revalidation filters start collapsed behind a filter button',
+  await page.locator('#btnToggleRevalidationFilters').isVisible() &&
+  await page.locator('#revalidationFilterPanel').isHidden());
+await page.locator('#btnToggleRevalidationFilters').click();
+check('Revalidation filter button opens the combined filter panel',
+  await page.locator('#revalidationFilterPanel').isVisible() &&
+  await page.locator('#revalidationKnowledgeCategorySeg').isVisible() &&
+  await page.locator('#revalidationCardTypeSeg').isVisible() &&
+  await page.locator('#revalidationArticleSearch').isVisible() &&
+  await page.locator('#revalidationArticleSelect').isVisible() &&
+  await page.locator('#revalidationTopicSelect').isVisible());
+await page.screenshot({ path: 'tests/shots/feedback-final/category-revalidation-filters-v56.png' });
+await page.fill('#revalidationArticleSearch', filterFixture.articleTitle);
+const searchedArticleOptions = await page.locator('#revalidationArticleSelect option')
+  .evaluateAll(options => options.map(option => option.value));
+check('Revalidation article search narrows the article selector',
+  searchedArticleOptions.includes('all') &&
+  searchedArticleOptions.includes(filterFixture.articleId),
+  JSON.stringify(searchedArticleOptions));
+await page.selectOption('#revalidationArticleSelect', filterFixture.articleId);
+await page.locator(`#revalidationCardTypeSeg button[data-rcardtype="${filterFixture.cardType}"]`).click();
+await page.selectOption('#revalidationTopicSelect', filterFixture.topic);
+const filteredPanelSummary = await page.locator('#revalidationScopeSummary').innerText();
+check('Revalidation combines knowledge category, card type, article, and article topic filters',
+  filteredPanelSummary.includes(filterFixture.categoryLabel) &&
+  filteredPanelSummary.includes(filterFixture.cardTypeLabel) &&
+  filteredPanelSummary.includes(filterFixture.topicLabel) &&
+  filteredPanelSummary.includes(filterFixture.articleTitle) &&
+  filteredPanelSummary.includes('1 张知识卡') &&
+  (await page.locator('#revalidationFilterCount').innerText()) === '4',
+  `${filteredPanelSummary} | count=${await page.locator('#revalidationFilterCount').innerText()}`);
+await page.locator('#btnResetRevalidationFilters').click();
+const resetRevalidationFilters = await page.evaluate(() => ({
+  article: document.querySelector('#revalidationArticleSelect').value,
+  category: document.querySelector('#revalidationKnowledgeCategorySeg button.on')?.dataset.rkcat || '',
+  cardType: document.querySelector('#revalidationCardTypeSeg button.on')?.dataset.rcardtype || '',
+  topic: document.querySelector('#revalidationTopicSelect').value,
+  search: document.querySelector('#revalidationArticleSearch').value,
+  count: document.querySelector('#revalidationFilterCount').textContent
+}));
+check('Revalidation reset restores the current knowledge-library filter baseline',
+  resetRevalidationFilters.article === filterFixture.articleId &&
+  resetRevalidationFilters.category === filterFixture.category &&
+  resetRevalidationFilters.cardType === 'all' &&
+  resetRevalidationFilters.topic === 'all' &&
+  resetRevalidationFilters.search === '' &&
+  resetRevalidationFilters.count === '2',
+  JSON.stringify(resetRevalidationFilters));
+await page.fill('#revalidationArticleSearch', filterFixture.articleTitle);
+await page.selectOption('#revalidationArticleSelect', filterFixture.articleId);
+await page.locator(`#revalidationCardTypeSeg button[data-rcardtype="${filterFixture.cardType}"]`).click();
+await page.selectOption('#revalidationTopicSelect', filterFixture.topic);
+let revalidationRequest = null;
+await page.route('**/api/revalidate-category', route => {
+  revalidationRequest = route.request().postDataJSON();
+  return route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
     ok: true,
     coverage: [
       { key: 'sec', title: 'SEC', scope: '证券监管与披露', url: 'https://www.sec.gov/', kind: 'official' }
@@ -216,7 +527,12 @@ await page.route('**/api/revalidate-category', route => route.fulfill({
         main: [{ source: 'one', text: 'ETF 跟踪净值与市价。' }],
         cross: [{ source: 'body', text: '申购赎回影响流动性与定价。' }],
         negative: [],
-        sufficient: true,
+        sufficient: false,
+        independentSufficient: true,
+        independent: {
+          votes: 2,
+          sufficient: true
+        },
         mainReason: '一句话直接解释金融资产定价对象。',
         crossReason: '正文独立说明流动性与定价关系。',
         negativeReason: '',
@@ -228,15 +544,22 @@ await page.route('**/api/revalidate-category', route => route.fulfill({
       online: 'registry',
       verifiedSources: 0
     }]
-  })
-}));
+    })
+  });
+});
 await page.locator('#btnRunCategoryRevalidation').click();
 await page.locator('[data-revalidation-pick]').waitFor({ state: 'visible' });
 check('Category revalidation preview defaults to explicit changes',
   await page.locator('[data-revalidation-pick]:checked').count() === 1 &&
+  !(await page.locator('[data-revalidation-pick]').isDisabled()) &&
   (await page.locator('#revalidationPreview').innerText()).includes('建议修改') &&
   (await page.locator('#revalidationPreview').innerText()).includes('ETF 跟踪净值与市价') &&
   (await page.locator('#revalidationPreview').innerText()).includes('正文独立说明流动性'));
+check('Current knowledge filters scope the revalidation request',
+  revalidationRequest?.cards?.length === 1 &&
+  revalidationRequest.cards[0]?.articleId === fixture.articleId &&
+  revalidationRequest.cards[0]?.id === fixture.cardId,
+  JSON.stringify(revalidationRequest));
 await page.locator('#btnApplyCategoryRevalidation').click();
 const applied = await page.evaluate(({ articleId, cardId }) => ({
   override: S.knowledgeOverrides?.[articleId]?.[cardId] || null,
@@ -286,11 +609,12 @@ await page.route('**/api/revalidate-category', route => route.fulfill({
         cross: [],
         negative: [],
         sufficient: false,
+        independentSufficient: false,
         mainReason: '未找到足以解释术语本体的正文证据。',
         crossReason: '没有提出交叉分类。',
         negativeReason: '',
         recommendation: 'keep',
-        sourcePolicy: 'research-entry-points-only'
+        sourcePolicy: 'primary-text-with-model-and-research-corroboration'
       },
       contentWarnings: [],
       sources: [],
@@ -300,7 +624,7 @@ await page.route('**/api/revalidate-category', route => route.fulfill({
   })
 }));
 await page.locator('#btnRunCategoryRevalidation').click();
-await page.locator('#revalidationPreview').getByText('证据不足').waitFor({ state: 'visible' });
+await page.locator('#revalidationPreview').getByText('外部来源不足').waitFor({ state: 'visible' });
 check('Insufficient category evidence remains unselected and visible in preview',
   await page.locator('[data-revalidation-pick]:checked').count() === 0 &&
   (await page.locator('#revalidationPreview').innerText()).includes('未找到足以解释术语本体的正文证据'));
@@ -394,6 +718,76 @@ check('Confirmed content fix updates the card and is persisted separately from c
   fixedContent.backups === 1 &&
   !fixedContent.override?.category,
   JSON.stringify(fixedContent));
+await page.unroute('**/api/revalidate-category');
+let delayedRevalidationRoute = null;
+let observeDelayedRevalidation;
+const delayedRevalidationObserved = new Promise(resolve => { observeDelayedRevalidation = resolve; });
+await page.route('**/api/revalidate-category', route => {
+  delayedRevalidationRoute = route;
+  observeDelayedRevalidation();
+});
+await page.locator('#btnRunCategoryRevalidation').click();
+await delayedRevalidationObserved;
+await page.locator('#categoryRevalidationModal .modal-head [data-close]').click();
+check('Category revalidation keeps running after the modal is closed',
+  await page.locator('#categoryRevalidationModal').isHidden());
+const delayedRequest = delayedRevalidationRoute.request().postDataJSON();
+const delayedCard = delayedRequest.cards[0];
+await delayedRevalidationRoute.fulfill({
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({
+    ok: true,
+    coverage: [{ key: 'sec', title: 'SEC', scope: '证券监管与披露', url: 'https://www.sec.gov/', kind: 'official' }],
+    results: [{
+      articleId: delayedCard.articleId,
+      articleTitle: delayedCard.articleTitle,
+      cardId: delayedCard.id,
+      term: delayedCard.term,
+      originalContent: { one: delayedCard.one, body: delayedCard.body, cases: delayedCard.cases },
+      current: { category: delayedCard.category, categories: delayedCard.categories, cardType: delayedCard.cardType },
+      suggested: { category: 'finance', categories: ['finance'], cardType: delayedCard.cardType },
+      categoryReason: '后台核验完成后的持久化结果。',
+      categoryConfidence: 0.96,
+      changed: true,
+      recommendation: 'change',
+      evidence: {
+        main: [{ source: 'body', text: delayedCard.body }],
+        cross: [],
+        negative: [],
+        sufficient: false,
+        independentSufficient: true,
+        independent: { votes: 2, sufficient: true },
+        mainReason: '正文用于一致性检查。',
+        crossReason: '没有提出交叉分类。',
+        negativeReason: '',
+        recommendation: 'change',
+        sourcePolicy: 'primary-text-with-model-and-research-corroboration'
+      },
+      contentWarnings: [],
+      sources: [],
+      online: 'registry',
+      verifiedSources: 0
+    }]
+  })
+});
+await page.waitForFunction(() =>
+  (S.tasks || []).some(task =>
+    task.type === 'knowledge-revalidation' &&
+    task.status === 'success' &&
+    task.message.includes('核验完成')));
+await page.locator('#btnRevalidateKnowledgeCategories').click();
+await page.locator('#revalidationPreview').getByText(delayedCard.term).waitFor({ state: 'visible' });
+const restoredRevalidation = await page.evaluate(() => ({
+  previewResults: lastCategoryRevalidationSession?.results?.length || 0,
+  modalVisible: !document.querySelector('#categoryRevalidationModal').hidden,
+  status: document.querySelector('#revalidationStatus').textContent
+}));
+check('Reopening category revalidation restores the completed background preview',
+  restoredRevalidation.previewResults === 1 &&
+  restoredRevalidation.modalVisible &&
+  restoredRevalidation.status.includes('已恢复'),
+  JSON.stringify(restoredRevalidation));
 check('Category revalidation UI has no JavaScript runtime errors',
   errors.length === 0,
   errors.slice(0, 3).join(' | '));

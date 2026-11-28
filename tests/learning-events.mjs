@@ -47,6 +47,34 @@ Learning.addEvent(state, {
   ts: at(2026, 11, 24, 11),
   source: 'quiz'
 });
+Learning.addEvent(state, {
+  type: 'article-review',
+  articleId: 'article-b',
+  ts: at(2026, 11, 23, 9),
+  source: 'reader'
+});
+state.studyPlans['2026-11-18'] = Learning.normalizePlan({
+  date: '2026-11-18',
+  items: [{ articleId: 'article-b', mode: 'read' }],
+  readTarget: 1,
+  wordTarget: 1,
+  note: 'Completed day fixture'
+});
+Learning.addEvent(state, {
+  type: 'article-read',
+  articleId: 'article-b',
+  ts: at(2026, 11, 18, 9),
+  source: 'reader'
+});
+Learning.addEvent(state, {
+  type: 'word-learned',
+  articleId: 'article-b',
+  wordKey: 'article-b:alpha',
+  word: 'alpha',
+  score: 2,
+  ts: at(2026, 11, 18, 10),
+  source: 'cards'
+});
 
 const summary = Learning.summaryForDay(state, '2026-11-24');
 assert.equal(summary.readCount, 1);
@@ -66,6 +94,36 @@ assert.equal(heatmap.length, 28);
 assert.equal(heatmap.at(-1).date, '2026-11-24');
 assert.equal(heatmap.at(-1).count, 2, 'one article plus one distinct word');
 assert.equal(heatmap.at(-1).level, 1);
+assert.equal(heatmap.at(-1).articleRead, 1);
+assert.equal(heatmap.at(-1).wordLearned, 1);
+assert.equal(heatmap.at(-1).wordReviewed, 1);
+
+const weekly = Learning.weeklyActivity(state, '2026-11-24', 2);
+assert.equal(weekly.length, 2);
+assert.equal(weekly[0].weekStart, '2026-11-16');
+assert.equal(weekly[0].articleRead, 1);
+assert.equal(weekly[0].wordLearned, 1);
+assert.equal(weekly[0].targetDays, 1);
+assert.equal(weekly[1].weekStart, '2026-11-23');
+assert.equal(weekly[1].articleRead, 1);
+assert.equal(weekly[1].articleReview, 1);
+assert.equal(weekly[1].wordLearned, 1);
+assert.equal(weekly[1].wordReviewed, 1);
+assert.equal(weekly[1].activeDays, 2);
+assert.equal(weekly[1].targetDays, 0);
+
+const activeRate = Learning.activeRateSeries(state, '2026-11-24', 10, 7);
+assert.equal(activeRate.length, 10);
+assert.equal(activeRate.at(-1).date, '2026-11-24');
+assert.equal(activeRate.at(-1).windowStart, '2026-11-18');
+assert.equal(activeRate.at(-1).activeDays, 3);
+assert.ok(Math.abs(activeRate.at(-1).rate - (3 / 7)) < 1e-9);
+assert.equal(activeRate.at(-1).targetDays, 1);
+assert.equal(activeRate.at(-1).articleRead, 2);
+assert.equal(activeRate.at(-1).articleReview, 1);
+assert.equal(activeRate.at(-1).wordLearned, 2);
+assert.equal(activeRate.at(-1).wordReviewed, 1);
+assert.equal(activeRate.at(-1).dayActive, true);
 
 const legacy = {
   read: {
