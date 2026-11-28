@@ -1,6 +1,6 @@
 # Git 项目来源与使用说明
 
-更新日期：2026-11-24
+更新日期：2026-11-28
 
 本文件记录 FinLens 从哪些 Git/GitHub 项目获取代码、数据或运行时内容，以及这些项目在本项目中的实际用途。普通网页链接和 npm 依赖不在此逐项展开；npm 依赖的精确版本与完整性哈希以 `package-lock.json` 为准。
 
@@ -8,7 +8,7 @@
 
 | 项目 | 可见性 | 使用方式 |
 | --- | --- | --- |
-| [HF08/finlens](https://github.com/HF08/finlens) | 私有 | FinLens 私有主项目。公开仓库以私有提交 `fec0c95cc9315288319d31a071fba784458d3c57` 为基线，移除四六级功能和词表入口后发布；公开清理提交为 `4612d016d47a5cc2ce047aab481378ce819a5472`。 |
+| [HF08/finlens](https://github.com/HF08/finlens) | 私有 | FinLens 私有主项目。公开仓库以私有提交 `fc8863f` 为同步基线，移除四六级功能、词表和入口后发布；本次公开清理提交为 `41acb14`。 |
 | [HF08/finlens-releases](https://github.com/HF08/finlens-releases) | 公开 | 当前公开源码与 Windows 发布资产仓库。 |
 
 ## 拉取或派生使用
